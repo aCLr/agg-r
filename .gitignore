@@ -1,0 +1,4 @@
+/target
+.idea
+tdlib
+/docker-compose.yaml
