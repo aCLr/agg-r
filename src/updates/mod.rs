@@ -1,5 +1,5 @@
 use crate::db::{models, Pool};
-use crate::error::Result;
+use crate::result::{Error, Result};
 use async_trait::async_trait;
 use futures::future::join_all;
 use std::sync::Arc;
@@ -117,7 +117,7 @@ impl SourcesAggregator {
                             Some(source) => source.process_updates(db_pool, telegram_update).await,
                         },
                     },
-                    Err(err) => Err(err.clone()),
+                    Err(err) => Err(Error::DbError(err.to_string())),
                 };
                 match insert_result {
                     Ok(ok_insert) => {

@@ -1,5 +1,5 @@
 use crate::db::Pool;
-use crate::error::Result;
+use crate::result::Result;
 use crate::schema::sources;
 use chrono::NaiveDateTime;
 use diesel::dsl::IntervalDsl;

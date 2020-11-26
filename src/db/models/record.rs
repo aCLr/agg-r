@@ -1,5 +1,5 @@
 use crate::db::Pool;
-use crate::error::Result;
+use crate::result::Result;
 use crate::schema::records;
 use chrono::NaiveDateTime;
 use diesel::pg::upsert::excluded;
@@ -51,7 +51,7 @@ pub struct NewRecord {
     pub guid: String,
     pub source_id: i32,
     pub content: String,
-    pub date: NaiveDateTime,
+    pub date: Option<NaiveDateTime>,
     pub image: Option<String>,
 }
 

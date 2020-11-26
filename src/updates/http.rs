@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
-use http_collector::error::Result as HttpResult;
 use http_collector::models::{Feed, FeedItem, FeedKind};
+use http_collector::result::Result as HttpResult;
 use std::sync::Arc;
 
 use super::{SourceData, SourceProvider, UpdatesHandler};
 use crate::db::{models, Pool};
-use crate::error::{Error, Result};
+use crate::result::{Error, Result};
 
 use http_collector::collector::{CacheStub, HttpCollector, ResultsHandler};
 use serde::Serialize;
@@ -59,9 +59,7 @@ impl ResultsHandler for Handler {
     async fn process(&self, result: HttpResult<(&Feed, FeedKind, String)>) {
         let update = match result {
             Ok((updates, _, _)) => Ok(SourceData::WebFeed(FeedUpdate::from(updates.clone()))),
-            Err(err) => Err(Error {
-                message: err.to_string(),
-            }),
+            Err(err) => Err(Error::HttpCollectorError(err)),
         };
         let mut local = self.sender.lock().await;
         if let Err(_) = local.send(update).await {
@@ -158,7 +156,7 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
                 .updates
                 .iter()
                 .map(|u| models::NewRecord {
-                    date: u.pub_date.clone(),
+                    date: Some(u.pub_date.clone()),
                     title: u.title.clone(),
                     guid: u.guid.clone(),
                     source_id: source.id.clone(),
@@ -198,11 +196,7 @@ impl SourceProvider for HttpSource {
         tokio::spawn(async move { http_runner.run(sources_receiver, &http_handler).await });
     }
 
-    async fn search_source(
-        &self,
-        db_pool: &Pool,
-        query: &str,
-    ) -> Result<Vec<models::Source>, Error> {
+    async fn search_source(&self, db_pool: &Pool, query: &str) -> Result<Vec<models::Source>> {
         let mut query = query.to_string();
         if !query.starts_with("http://") && !query.starts_with("https://") {
             query = format!("https://{}", query);

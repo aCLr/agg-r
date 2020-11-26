@@ -16,6 +16,6 @@ mod logs;
 pub mod aggregator;
 pub mod config;
 pub mod db;
-pub mod error;
+pub mod result;
 mod schema;
 mod updates;

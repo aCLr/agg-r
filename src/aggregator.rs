@@ -1,5 +1,5 @@
 use crate::db::{models, Pool};
-use crate::error::Result;
+use crate::result::Result;
 use crate::{config, updates};
 use std::sync::Arc;
 
