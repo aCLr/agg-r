@@ -1,7 +1,9 @@
 use super::TelegramUpdate;
 use crate::result::{Error, Result};
 use tg_collector::tg_client::TgUpdate;
-use tg_collector::{Message, MessageContent, MessageText, TextEntity, TextEntityType};
+use tg_collector::{
+    FormattedText, Message, MessageContent, MessageText, TextEntity, TextEntityType,
+};
 
 pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>> {
     Ok(match tg_update {
@@ -26,51 +28,52 @@ pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>
                 content: content.unwrap_or_default(),
             })
         }
-        TgUpdate::ChatPhoto(not_supported) => return Err(Error::UpdateNotSupported),
-        TgUpdate::ChatTitle(not_supported) => return Err(Error::UpdateNotSupported),
-        TgUpdate::Supergroup(not_supported) => return Err(Error::UpdateNotSupported),
-        TgUpdate::SupergroupFullInfo(not_supported) => return Err(Error::UpdateNotSupported),
+        TgUpdate::ChatPhoto(_) => return Err(Error::UpdateNotSupported),
+        TgUpdate::ChatTitle(_) => return Err(Error::UpdateNotSupported),
+        TgUpdate::Supergroup(_) => return Err(Error::UpdateNotSupported),
+        TgUpdate::SupergroupFullInfo(_) => return Err(Error::UpdateNotSupported),
     })
 }
 
-async fn parse_message_content(message: &MessageContent) -> Result<Option<String>> {
+pub async fn parse_message_content(message: &MessageContent) -> Result<Option<String>> {
     match message {
-        MessageContent::MessageText(message_text) => {
-            Ok(Some(parse_message_text(message_text).await))
+        MessageContent::MessageText(text) => Ok(Some(parse_formatted_text(text.text()))),
+        MessageContent::MessageAnimation(animation) => {
+            Ok(Some(parse_formatted_text(animation.caption())))
         }
-        MessageContent::MessageAnimation(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageAudio(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatChangePhoto(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatChangeTitle(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatDeletePhoto(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatJoinByLink(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatUpgradeFrom(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatUpgradeTo(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageContact(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageContactRegistered(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageCustomServiceAction(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageDice(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageDocument(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageExpiredPhoto(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageExpiredVideo(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageInvoice(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageLocation(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessagePassportDataReceived(not_supported) => {
-            Err(Error::UpdateNotSupported)
+        MessageContent::MessageAudio(audio) => Ok(Some(parse_formatted_text(audio.caption()))),
+        MessageContent::MessageDocument(document) => {
+            Ok(Some(parse_formatted_text(document.caption())))
         }
-        MessageContent::MessagePhoto(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessagePoll(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageScreenshotTaken(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageSticker(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageSupergroupChatCreate(not_supported) => {
-            Err(Error::UpdateNotSupported)
-        }
+        MessageContent::MessagePhoto(photo) => Ok(Some(parse_formatted_text(photo.caption()))),
+        MessageContent::MessageVideo(video) => Ok(Some(parse_formatted_text(video.caption()))),
 
-        MessageContent::MessageVenue(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageVideo(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageVideoNote(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageVoiceNote(not_supported) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageWebsiteConnected(not_supported) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageChatChangePhoto(_) => Err(Error::UpdateNotSupported),
+
+        MessageContent::MessagePoll(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageChatChangeTitle(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageChatDeletePhoto(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageChatJoinByLink(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageChatUpgradeFrom(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageChatUpgradeTo(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageContact(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageContactRegistered(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageCustomServiceAction(_) => Err(Error::UpdateNotSupported),
+        // MessageContent::MessageDice(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageExpiredPhoto(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageExpiredVideo(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageInvoice(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageLocation(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessagePassportDataReceived(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageScreenshotTaken(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageSticker(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageSupergroupChatCreate(_) => Err(Error::UpdateNotSupported),
+
+        MessageContent::MessageVenue(_) => Err(Error::UpdateNotSupported),
+
+        MessageContent::MessageVideoNote(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageVoiceNote(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageWebsiteConnected(_) => Err(Error::UpdateNotSupported),
 
         MessageContent::_Default(_) => Ok(None),
         MessageContent::MessageBasicGroupChatCreate(_) => Ok(None),
@@ -88,14 +91,14 @@ async fn parse_message_content(message: &MessageContent) -> Result<Option<String
     }
 }
 
-async fn parse_message_text(message_text: &MessageText) -> String {
-    let mut entities_by_index = make_entities_stack(message_text.text().entities());
+pub fn parse_formatted_text(formatted_text: &FormattedText) -> String {
+    let mut entities_by_index = make_entities_stack(formatted_text.entities());
     let mut result_text = String::new();
     let mut current_entity = match entities_by_index.pop() {
-        None => return message_text.text().text().clone(),
+        None => return formatted_text.text().clone(),
         Some(entity) => entity,
     };
-    for (i, ch) in message_text.text().text().chars().enumerate() {
+    for (i, ch) in formatted_text.text().chars().enumerate() {
         if i == current_entity.0 {
             result_text = format!("{}{}{}", result_text, current_entity.1, ch);
             current_entity = match entities_by_index.pop() {
@@ -103,12 +106,11 @@ async fn parse_message_text(message_text: &MessageText) -> String {
                     result_text = format!(
                         "{}{}",
                         result_text,
-                        &message_text
-                            .text()
+                        &formatted_text
                             .text()
                             .chars()
                             .skip(i + 1)
-                            .take(message_text.text().text().len() - i)
+                            .take(formatted_text.text().len() - i)
                             .collect::<String>()
                     );
                     return result_text;
@@ -145,7 +147,7 @@ fn make_entities_stack(entities: &Vec<TextEntity>) -> Vec<(usize, String)> {
             TextEntityType::Underline(_) => Some(("<u>".to_string(), "</u>".to_string())),
             TextEntityType::Url(_) => Some(("<a>".to_string(), "</a>".to_string())),
             TextEntityType::_Default(_) => None,
-            TextEntityType::BankCardNumber(_) => None,
+            // TextEntityType::BankCardNumber(_) => None,
             TextEntityType::BotCommand(_) => None,
             TextEntityType::Cashtag(_) => None,
             TextEntityType::EmailAddress(_) => None,

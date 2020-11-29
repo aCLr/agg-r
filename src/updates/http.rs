@@ -8,9 +8,11 @@ use super::{SourceData, SourceProvider, UpdatesHandler};
 use crate::db::{models, Pool};
 use crate::result::{Error, Result};
 
+use crate::updates::Source;
 use http_collector::collector::{CacheStub, HttpCollector, ResultsHandler};
 use serde::Serialize;
 use tokio::sync::{mpsc, Mutex};
+use tokio::task::JoinHandle;
 use tokio::time::Duration;
 
 // TODO: enum?
@@ -173,6 +175,15 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
 
 #[async_trait]
 impl SourceProvider for HttpSource {
+    fn get_source(&self) -> Source {
+        Source::Web
+    }
+
+    async fn synchronize(&self, db_pool: &Pool, secs_depth: i32) -> Result<()> {
+        // nothing to sync with http source
+        Ok(())
+    }
+
     async fn run(
         &self,
         db_pool: &Pool,

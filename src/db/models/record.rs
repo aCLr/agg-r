@@ -48,6 +48,7 @@ impl Record {
 #[table_name = "records"]
 pub struct NewRecord {
     pub title: Option<String>,
+    // TODO: separated guid and external link; add date, modify date (for app, not source)
     pub guid: String,
     pub source_id: i32,
     pub content: String,

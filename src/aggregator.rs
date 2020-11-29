@@ -1,5 +1,6 @@
 use crate::db::{models, Pool};
 use crate::result::Result;
+use crate::updates::Source;
 use crate::{config, updates};
 use std::sync::Arc;
 
@@ -19,6 +20,12 @@ impl Aggregator {
 
     pub async fn search_source(&self, query: &str) -> Result<Vec<models::Source>> {
         self.handler.search_source(&self.db_pool, query).await
+    }
+
+    pub async fn synchronize(&self, secs_depth: i32, source: Option<Source>) -> Result<()> {
+        self.handler
+            .synchronize(&self.db_pool, secs_depth, source)
+            .await
     }
 }
 

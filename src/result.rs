@@ -4,8 +4,9 @@ use std::fmt;
 pub enum Error {
     DbError(String),
     HttpCollectorError(http_collector::result::Error),
-    TgCollectorError,
+    TgCollectorError(tg_collector::result::Error),
     UpdateNotSupported,
+    SourceKindConflict(String),
 }
 
 impl fmt::Display for Error {
@@ -32,4 +33,9 @@ impl From<http_collector::result::Error> for Error {
     }
 }
 
+impl From<tg_collector::result::Error> for Error {
+    fn from(err: tg_collector::result::Error) -> Self {
+        Self::TgCollectorError(err)
+    }
+}
 pub type Result<T, E = Error> = std::result::Result<T, E>;
