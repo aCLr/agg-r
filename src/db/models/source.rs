@@ -18,6 +18,7 @@ pub struct Source {
     pub kind: String,
     pub image: Option<String>,
     pub last_scrape_time: NaiveDateTime,
+    pub external_link: String,
 }
 
 impl Source {
@@ -32,9 +33,14 @@ impl Source {
         Ok(sources::table.load_async::<Self>(&pool).await?)
     }
 
-    pub async fn get_by_origin(pool: &Pool, origin: &str) -> Result<Vec<Self>> {
+    pub async fn search(pool: &Pool, origin: &str) -> Result<Vec<Self>> {
+        let like = format!("%{}%", origin);
         let source = sources::table
-            .filter(sources::origin.like(format!("%{}%", origin)))
+            .filter(
+                sources::origin.like(like.clone()).or(sources::external_link
+                    .like(like.clone())
+                    .or(sources::name.like(like.clone()))),
+            )
             .get_results_async::<Self>(pool)
             .await;
         match source {
@@ -79,6 +85,7 @@ pub struct NewSource {
     pub origin: String,
     pub kind: String,
     pub image: Option<String>,
+    pub external_link: String,
 }
 
 impl NewSource {

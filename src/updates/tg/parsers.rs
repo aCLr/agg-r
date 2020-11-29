@@ -1,9 +1,7 @@
 use super::TelegramUpdate;
 use crate::result::{Error, Result};
 use tg_collector::tg_client::TgUpdate;
-use tg_collector::{
-    FormattedText, Message, MessageContent, MessageText, TextEntity, TextEntityType,
-};
+use tg_collector::{FormattedText, MessageContent, TextEntity, TextEntityType};
 
 pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>> {
     Ok(match tg_update {

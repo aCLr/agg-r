@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tg_collector::tg_client::{TgClient, TgUpdate};
-use tg_collector::Message;
+use tg_collector::types::Channel;
 use tokio::stream::StreamExt;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::spawn;
@@ -135,6 +135,16 @@ impl TelegramSource {
     pub fn builder(api_id: i64, api_hash: &str, phone_number: &str) -> TelegramSourceBuilder {
         TelegramSourceBuilder::new(api_id, api_hash, phone_number)
     }
+
+    fn channel_to_new_source(channel: Channel) -> NewSource {
+        NewSource {
+            name: channel.title,
+            origin: channel.chat_id.to_string(),
+            kind: TELEGRAM.to_string(),
+            image: None,
+            external_link: channel.username,
+        }
+    }
 }
 #[async_trait]
 impl SourceProvider for TelegramSource {
@@ -152,7 +162,21 @@ impl SourceProvider for TelegramSource {
     }
 
     async fn search_source(&self, db_pool: &Pool, query: &str) -> Result<Vec<models::Source>> {
-        unimplemented!()
+        let channels = self
+            .collector
+            .read()
+            .await
+            .search_public_chats(query)
+            .await?;
+        let mut sources = vec![];
+        for ch in channels {
+            let source = TelegramSource::channel_to_new_source(ch);
+            match source.save(db_pool).await {
+                Ok(s) => sources.push(s),
+                Err(e) => error!("{:?}", e),
+            }
+        }
+        Ok(sources)
     }
 
     async fn synchronize(&self, db_pool: &Pool, secs_depth: i32) -> Result<()> {
@@ -162,35 +186,35 @@ impl SourceProvider for TelegramSource {
         debug!("got {} channels to sync", channels.len());
         for channel in channels {
             debug!("going to sync {}", channel.title);
-            let source = NewSource {
-                name: channel.title,
-                origin: channel.username.clone(),
-                kind: TELEGRAM.to_string(),
-                image: None,
-            };
+            let chat_id = channel.chat_id.clone();
+            let source = TelegramSource::channel_to_new_source(channel);
             let source = source.save(db_pool).await?;
             let mut messages_stream = Box::pin(TgClient::get_chat_history_stream(
                 self.collector.clone(),
-                channel.chat_id,
+                chat_id,
                 until.as_secs() as i64,
             ));
             let mut parsed_records = vec![];
             while let Some(message) = messages_stream.next().await {
                 match message {
                     Ok(message) => match parsers::parse_message_content(message.content()).await {
-                        Ok(Some(c)) => parsed_records.push(NewRecord {
-                            title: None,
-                            guid: self
+                        Ok(Some(c)) => {
+                            let message_link = self
                                 .collector
                                 .read()
                                 .await
                                 .get_message_link(message.chat_id(), message.id())
-                                .await?,
-                            source_id: source.id,
-                            content: c,
-                            date: Some(NaiveDateTime::from_timestamp(message.date(), 0)),
-                            image: None,
-                        }),
+                                .await?;
+                            parsed_records.push(NewRecord {
+                                title: None,
+                                source_record_id: message.id().to_string(),
+                                source_id: source.id,
+                                content: c,
+                                date: Some(NaiveDateTime::from_timestamp(message.date(), 0)),
+                                image: None,
+                                external_link: message_link,
+                            })
+                        }
                         Ok(None) => {}
                         Err(Error::UpdateNotSupported) => {}
                         Err(e) => return Err(e),
@@ -215,13 +239,18 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
         unimplemented!()
     }
     async fn process_updates(&self, db_pool: &Pool, updates: &TelegramUpdate) -> Result<usize> {
-        let sources =
-            models::Source::get_by_origin(db_pool, updates.chat_id.to_string().as_str()).await?;
+        let sources = models::Source::search(db_pool, updates.chat_id.to_string().as_str()).await?;
         let source = match sources.len() {
             0 => self.create_source(db_pool, updates).await?,
             _ => sources.first().unwrap().clone(),
         };
-
+        let message_id = updates.message_id.clone();
+        let message_link = self
+            .collector
+            .read()
+            .await
+            .get_message_link(updates.chat_id, message_id)
+            .await?;
         let affected = models::NewRecord::update_or_create(
             db_pool,
             vec![models::NewRecord {
@@ -230,9 +259,10 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                 date: updates
                     .date
                     .map(|d| chrono::NaiveDateTime::from_timestamp(d.clone(), 0)),
-                guid: updates.message_id.to_string(),
-                source_id: source.id.clone(),
+                source_record_id: message_id.to_string(),
+                source_id: source.id,
                 content: updates.content.clone(),
+                external_link: message_link,
             }],
         )
         .await?;

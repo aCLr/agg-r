@@ -5,7 +5,6 @@ use futures::future::join_all;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex};
-use tokio::task::JoinHandle;
 
 pub mod http;
 pub mod tg;
@@ -107,7 +106,7 @@ impl SourcesAggregator {
                 Err(err) => Err(err)?,
             }
         }
-        results.extend(models::Source::get_by_origin(db_pool, query).await?);
+        results.extend(models::Source::search(db_pool, query).await?);
         // TODO: check: duplicates appears
         results.dedup_by_key(|s| s.id);
         Ok(results)

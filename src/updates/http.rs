@@ -10,9 +10,9 @@ use crate::result::{Error, Result};
 
 use crate::updates::Source;
 use http_collector::collector::{CacheStub, HttpCollector, ResultsHandler};
+use http_collector::result::Error as CollectorError;
 use serde::Serialize;
 use tokio::sync::{mpsc, Mutex};
-use tokio::task::JoinHandle;
 use tokio::time::Duration;
 
 // TODO: enum?
@@ -139,6 +139,7 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
         let new_source = models::NewSource {
             name: updates.name.clone(),
             origin: updates.link.clone(),
+            external_link: updates.link.clone(),
             kind: WEB.to_string(),
             image: updates.image.clone(),
         };
@@ -147,7 +148,7 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
     }
 
     async fn process_updates(&self, db_pool: &Pool, updates: &FeedUpdate) -> Result<usize> {
-        let sources = models::Source::get_by_origin(db_pool, updates.link.as_str()).await?;
+        let sources = models::Source::search(db_pool, updates.link.as_str()).await?;
         let source = match sources.len() {
             0 => self.create_source(db_pool, updates).await?,
             _ => sources.first().unwrap().clone(),
@@ -160,10 +161,11 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
                 .map(|u| models::NewRecord {
                     date: Some(u.pub_date.clone()),
                     title: u.title.clone(),
-                    guid: u.guid.clone(),
+                    source_record_id: u.guid.clone(),
                     source_id: source.id.clone(),
                     content: u.content.clone(),
                     image: u.image_link.clone(),
+                    external_link: u.guid.clone(),
                 })
                 .collect::<Vec<models::NewRecord>>(),
         )
@@ -212,8 +214,11 @@ impl SourceProvider for HttpSource {
         if !query.starts_with("http://") && !query.starts_with("https://") {
             query = format!("https://{}", query);
         }
-        // let feeds: Vec<Feed> = vec![];
-        let feeds = self.collector.detect_feeds(query.as_str()).await?;
+        let feeds = match self.collector.detect_feeds(query.as_str()).await {
+            Ok(feeds) => feeds,
+            Err(CollectorError::RequestError) => vec![],
+            Err(e) => Err(e)?,
+        };
         let new_sources = models::NewSource::save_bulk(
             db_pool,
             feeds
@@ -221,6 +226,7 @@ impl SourceProvider for HttpSource {
                 .map(|f| models::NewSource {
                     name: f.name.clone(),
                     origin: f.link.clone(),
+                    external_link: f.link.clone(),
                     kind: WEB.to_string(),
                     image: f.image.clone(),
                 })

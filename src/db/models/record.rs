@@ -12,11 +12,12 @@ use tokio_diesel::*;
 pub struct Record {
     pub id: i32,
     pub title: Option<String>,
-    pub guid: String,
+    pub source_record_id: String,
     pub source_id: i32,
     pub content: String,
     pub date: NaiveDateTime,
     pub image: Option<String>,
+    pub external_link: String,
 }
 
 impl Record {
@@ -48,19 +49,20 @@ impl Record {
 #[table_name = "records"]
 pub struct NewRecord {
     pub title: Option<String>,
-    // TODO: separated guid and external link; add date, modify date (for app, not source)
-    pub guid: String,
+    // TODO: add date, modify date (for app, not fo source)
+    pub source_record_id: String,
     pub source_id: i32,
     pub content: String,
     pub date: Option<NaiveDateTime>,
     pub image: Option<String>,
+    pub external_link: String,
 }
 
 impl NewRecord {
     pub async fn update_or_create(pool: &Pool, records: Vec<Self>) -> Result<usize> {
         Ok(diesel::insert_into(records::table)
             .values(records)
-            .on_conflict((records::guid, records::source_id))
+            .on_conflict((records::source_record_id, records::source_id))
             .do_update()
             .set(records::content.eq(excluded(records::content)))
             .execute_async(pool)
