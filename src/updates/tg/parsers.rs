@@ -1,12 +1,13 @@
 use super::TelegramUpdate;
 use crate::result::{Error, Result};
+use crate::updates::tg::TelegramFile;
 use tg_collector::tg_client::TgUpdate;
-use tg_collector::{FormattedText, MessageContent, TextEntity, TextEntityType};
+use tg_collector::{File, FormattedText, MessageContent, TextEntity, TextEntityType};
 
 pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>> {
     Ok(match tg_update {
         TgUpdate::NewMessage(new_message) => {
-            let content = parse_message_content(new_message.message().content()).await?;
+            let (content, files) = parse_message_content(new_message.message().content()).await?;
             match content {
                 None => None,
                 Some(content) => Some(TelegramUpdate {
@@ -14,16 +15,18 @@ pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>
                     chat_id: new_message.message().chat_id(),
                     date: Some(new_message.message().date()),
                     content,
+                    file: None,
                 }),
             }
         }
         TgUpdate::MessageContent(message_content) => {
-            let content = parse_message_content(message_content.new_content()).await?;
+            let (content, files) = parse_message_content(message_content.new_content()).await?;
             Some(TelegramUpdate {
                 message_id: message_content.message_id(),
                 chat_id: message_content.chat_id(),
                 date: None,
                 content: content.unwrap_or_default(),
+                file: None,
             })
         }
         TgUpdate::ChatPhoto(_) => return Err(Error::UpdateNotSupported),
@@ -33,18 +36,32 @@ pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>
     })
 }
 
-pub async fn parse_message_content(message: &MessageContent) -> Result<Option<String>> {
+pub async fn parse_message_content(
+    message: &MessageContent,
+) -> Result<(Option<String>, Option<TelegramFile>)> {
     match message {
-        MessageContent::MessageText(text) => Ok(Some(parse_formatted_text(text.text()))),
+        MessageContent::MessageText(text) => Ok((Some(parse_formatted_text(text.text())), None)),
         MessageContent::MessageAnimation(animation) => {
-            Ok(Some(parse_formatted_text(animation.caption())))
+            let files = None;
+            Ok((Some(parse_formatted_text(animation.caption())), files))
         }
-        MessageContent::MessageAudio(audio) => Ok(Some(parse_formatted_text(audio.caption()))),
-        MessageContent::MessageDocument(document) => {
-            Ok(Some(parse_formatted_text(document.caption())))
+        MessageContent::MessageAudio(audio) => {
+            Ok((Some(parse_formatted_text(audio.caption())), None))
         }
-        MessageContent::MessagePhoto(photo) => Ok(Some(parse_formatted_text(photo.caption()))),
-        MessageContent::MessageVideo(video) => Ok(Some(parse_formatted_text(video.caption()))),
+        MessageContent::MessageDocument(message_document) => {
+            let mut file = parse_file(message_document.document().document());
+            file.file_name = Some(message_document.document().file_name().clone());
+            Ok((
+                Some(parse_formatted_text(message_document.caption())),
+                Some(file),
+            ))
+        }
+        MessageContent::MessagePhoto(photo) => {
+            Ok((Some(parse_formatted_text(photo.caption())), None))
+        }
+        MessageContent::MessageVideo(video) => {
+            Ok((Some(parse_formatted_text(video.caption())), None))
+        }
 
         MessageContent::MessageChatChangePhoto(_) => Err(Error::UpdateNotSupported),
 
@@ -73,19 +90,28 @@ pub async fn parse_message_content(message: &MessageContent) -> Result<Option<St
         MessageContent::MessageVoiceNote(_) => Err(Error::UpdateNotSupported),
         MessageContent::MessageWebsiteConnected(_) => Err(Error::UpdateNotSupported),
 
-        MessageContent::_Default(_) => Ok(None),
-        MessageContent::MessageBasicGroupChatCreate(_) => Ok(None),
-        MessageContent::MessageCall(_) => Ok(None),
-        MessageContent::MessageChatAddMembers(_) => Ok(None),
-        MessageContent::MessageChatDeleteMember(_) => Ok(None),
-        MessageContent::MessageChatSetTtl(_) => Ok(None),
-        MessageContent::MessageGame(_) => Ok(None),
-        MessageContent::MessageGameScore(_) => Ok(None),
-        MessageContent::MessagePassportDataSent(_) => Ok(None),
-        MessageContent::MessagePaymentSuccessful(_) => Ok(None),
-        MessageContent::MessagePaymentSuccessfulBot(_) => Ok(None),
-        MessageContent::MessagePinMessage(_) => Ok(None),
-        MessageContent::MessageUnsupported(_) => Ok(None),
+        MessageContent::_Default(_) => Ok((None, None)),
+        MessageContent::MessageBasicGroupChatCreate(_) => Ok((None, None)),
+        MessageContent::MessageCall(_) => Ok((None, None)),
+        MessageContent::MessageChatAddMembers(_) => Ok((None, None)),
+        MessageContent::MessageChatDeleteMember(_) => Ok((None, None)),
+        MessageContent::MessageChatSetTtl(_) => Ok((None, None)),
+        MessageContent::MessageGame(_) => Ok((None, None)),
+        MessageContent::MessageGameScore(_) => Ok((None, None)),
+        MessageContent::MessagePassportDataSent(_) => Ok((None, None)),
+        MessageContent::MessagePaymentSuccessful(_) => Ok((None, None)),
+        MessageContent::MessagePaymentSuccessfulBot(_) => Ok((None, None)),
+        MessageContent::MessagePinMessage(_) => Ok((None, None)),
+        MessageContent::MessageUnsupported(_) => Ok((None, None)),
+    }
+}
+
+pub fn parse_file(file: &File) -> TelegramFile {
+    TelegramFile {
+        local_path: None,
+        file_name: None,
+        remote_id: file.remote().unique_id().clone(),
+        remote_file: file.remote().id().clone(),
     }
 }
 

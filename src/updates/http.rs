@@ -165,13 +165,26 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
                     source_id: source.id.clone(),
                     content: u.content.clone(),
                     image: u.image_link.clone(),
-                    external_link: u.guid.clone(),
                 })
                 .collect::<Vec<models::NewRecord>>(),
         )
         .await?;
+        if affected.len() > 0 {
+            let mut tasks = vec![];
+            updates.updates.iter().for_each(|u| {
+                if affected.contains(&(u.guid.clone(), source.id)) {
+                    tasks.push(models::Record::set_external_ink(
+                        db_pool,
+                        u.guid.clone(),
+                        source.id,
+                        u.guid.clone(),
+                    ));
+                }
+            });
+            futures::future::join_all(tasks).await;
+        }
         source.set_scraped_now(db_pool).await?;
-        Ok(affected)
+        Ok(affected.len())
     }
 }
 

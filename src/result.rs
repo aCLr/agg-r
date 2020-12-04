@@ -7,6 +7,8 @@ pub enum Error {
     TgCollectorError(tg_collector::result::Error),
     UpdateNotSupported,
     SourceKindConflict(String),
+    SourceNotFound,
+    SourceCreationError,
 }
 
 impl fmt::Display for Error {

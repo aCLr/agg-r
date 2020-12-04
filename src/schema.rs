@@ -1,4 +1,16 @@
 table! {
+    files (id) {
+        id -> Int4,
+        record_id -> Int4,
+        kind -> Text,
+        local_path -> Nullable<Text>,
+        remote_file -> Text,
+        remote_id -> Nullable<Text>,
+        file_name -> Nullable<Text>,
+    }
+}
+
+table! {
     records (id) {
         id -> Int4,
         title -> Nullable<Text>,
@@ -23,6 +35,7 @@ table! {
     }
 }
 
+joinable!(files -> records (source_id));
 joinable!(records -> sources (source_id));
 
-allow_tables_to_appear_in_same_query!(records, sources,);
+allow_tables_to_appear_in_same_query!(files, records, sources,);

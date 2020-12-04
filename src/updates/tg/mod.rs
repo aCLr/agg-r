@@ -1,7 +1,6 @@
 mod parsers;
 
 use super::{SourceData, SourceProvider, UpdatesHandler};
-use crate::db::models::{NewRecord, NewSource};
 use crate::db::{models, Pool};
 use crate::result::{Error, Result};
 use crate::updates::Source;
@@ -21,11 +20,20 @@ use tokio::task::spawn;
 const TELEGRAM: &'static str = "TELEGRAM";
 
 #[derive(Debug)]
+pub struct TelegramFile {
+    pub local_path: Option<String>,
+    pub remote_file: String,
+    pub remote_id: String,
+    pub file_name: Option<String>,
+}
+
+#[derive(Debug)]
 pub struct TelegramUpdate {
     pub message_id: i64,
     pub chat_id: i64,
     pub date: Option<i64>,
     pub content: String,
+    pub file: Option<TelegramFile>,
 }
 
 #[derive(Clone)]
@@ -136,8 +144,8 @@ impl TelegramSource {
         TelegramSourceBuilder::new(api_id, api_hash, phone_number)
     }
 
-    fn channel_to_new_source(channel: Channel) -> NewSource {
-        NewSource {
+    fn channel_to_new_source(channel: Channel) -> models::NewSource {
+        models::NewSource {
             name: channel.title,
             origin: channel.chat_id.to_string(),
             kind: TELEGRAM.to_string(),
@@ -197,33 +205,32 @@ impl SourceProvider for TelegramSource {
             let mut parsed_records = vec![];
             while let Some(message) = messages_stream.next().await {
                 match message {
-                    Ok(message) => match parsers::parse_message_content(message.content()).await {
-                        Ok(Some(c)) => {
-                            let message_link = self
-                                .collector
-                                .read()
-                                .await
-                                .get_message_link(message.chat_id(), message.id())
-                                .await?;
-                            parsed_records.push(NewRecord {
+                    Ok(message) => {
+                        let mut on_content = |c| {
+                            let record = models::NewRecord {
                                 title: None,
                                 source_record_id: message.id().to_string(),
                                 source_id: source.id,
                                 content: c,
                                 date: Some(NaiveDateTime::from_timestamp(message.date(), 0)),
                                 image: None,
-                                external_link: message_link,
-                            })
+                            };
+                            parsed_records.push(record);
+                        };
+                        match parsers::parse_message_content(message.content()).await {
+                            Ok((Some(c), Some(f))) => on_content(c),
+                            Ok((Some(c), None)) => on_content(c),
+                            Ok((None, None)) => {}
+                            Ok((None, Some(f))) => {}
+                            Err(Error::UpdateNotSupported) => continue,
+                            Err(e) => return Err(e),
                         }
-                        Ok(None) => {}
-                        Err(Error::UpdateNotSupported) => {}
-                        Err(e) => return Err(e),
-                    },
+                    }
                     Err(e) => return Err(Error::TgCollectorError(e)),
                 }
             }
             debug!("get {} records for {}", parsed_records.len(), source.name);
-            NewRecord::update_or_create(db_pool, parsed_records).await?;
+            models::NewRecord::update_or_create(db_pool, parsed_records).await?;
         }
         Ok(())
     }
@@ -236,8 +243,24 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
         db_pool: &Pool,
         updates: &TelegramUpdate,
     ) -> Result<models::Source> {
-        unimplemented!()
+        self.collector
+            .read()
+            .await
+            .join_chat(&updates.chat_id)
+            .await?;
+        let chann = self
+            .collector
+            .read()
+            .await
+            .get_channel(updates.chat_id)
+            .await?;
+        if chann.is_none() {
+            return Err(Error::SourceNotFound);
+        }
+        let s = TelegramSource::channel_to_new_source(chann.unwrap());
+        Ok(s.save(db_pool).await?)
     }
+
     async fn process_updates(&self, db_pool: &Pool, updates: &TelegramUpdate) -> Result<usize> {
         let sources = models::Source::search(db_pool, updates.chat_id.to_string().as_str()).await?;
         let source = match sources.len() {
@@ -245,13 +268,7 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
             _ => sources.first().unwrap().clone(),
         };
         let message_id = updates.message_id.clone();
-        let message_link = self
-            .collector
-            .read()
-            .await
-            .get_message_link(updates.chat_id, message_id)
-            .await?;
-        let affected = models::NewRecord::update_or_create(
+        let created = models::NewRecord::update_or_create(
             db_pool,
             vec![models::NewRecord {
                 title: None,
@@ -262,10 +279,41 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                 source_record_id: message_id.to_string(),
                 source_id: source.id,
                 content: updates.content.clone(),
-                external_link: message_link,
             }],
         )
         .await?;
-        Ok(affected)
+        // records inserted
+        self.handle_record_inserted(db_pool, updates.chat_id, message_id, created)
+            .await
+    }
+}
+
+impl TelegramSource {
+    async fn handle_record_inserted(
+        &self,
+        db_pool: &Pool,
+        chat_id: i64,
+        message_id: i64,
+        created: Vec<(String, i32)>,
+    ) -> Result<usize, Error> {
+        match created.len() {
+            0 => Ok(0),
+            1 => {
+                let message_link = self
+                    .collector
+                    .read()
+                    .await
+                    .get_message_link(chat_id, message_id)
+                    .await?;
+                let (sri, si) = created.first().unwrap();
+                models::Record::set_external_ink(db_pool, sri.clone(), si.clone(), message_link)
+                    .await?;
+                Ok(1)
+            }
+            x => {
+                warn!("exactly one source must be created, create {}", x);
+                Err(Error::SourceCreationError)
+            }
+        }
     }
 }
