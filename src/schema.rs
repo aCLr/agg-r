@@ -4,7 +4,7 @@ table! {
         record_id -> Int4,
         kind -> Text,
         local_path -> Nullable<Text>,
-        remote_file -> Text,
+        remote_path -> Text,
         remote_id -> Nullable<Text>,
         file_name -> Nullable<Text>,
     }
@@ -35,7 +35,7 @@ table! {
     }
 }
 
-joinable!(files -> records (source_id));
+joinable!(files -> records (record_id));
 joinable!(records -> sources (source_id));
 
 allow_tables_to_appear_in_same_query!(files, records, sources,);

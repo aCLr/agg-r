@@ -3,7 +3,7 @@ CREATE TABLE files (
   record_id int not null constraint files_record_id references records,
   kind text not null,
   local_path text,
-  remote_file text not null,
+  remote_path text not null,
   remote_id text,
   file_name text
 )

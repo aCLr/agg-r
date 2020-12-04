@@ -2,7 +2,7 @@ use super::TelegramUpdate;
 use crate::result::{Error, Result};
 use crate::updates::tg::TelegramFile;
 use tg_collector::tg_client::TgUpdate;
-use tg_collector::{File, FormattedText, MessageContent, TextEntity, TextEntityType};
+use tg_collector::{FormattedText, MessageContent, TextEntity, TextEntityType};
 
 pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>> {
     Ok(match tg_update {
@@ -49,7 +49,17 @@ pub async fn parse_message_content(
             Ok((Some(parse_formatted_text(audio.caption())), None))
         }
         MessageContent::MessageDocument(message_document) => {
-            let mut file = parse_file(message_document.document().document());
+            let mut file = TelegramFile {
+                local_path: None,
+                remote_file: message_document.document().document().remote().id().clone(),
+                remote_id: message_document
+                    .document()
+                    .document()
+                    .remote()
+                    .unique_id()
+                    .clone(),
+                file_name: Some(message_document.document().file_name().clone()),
+            };
             file.file_name = Some(message_document.document().file_name().clone());
             Ok((
                 Some(parse_formatted_text(message_document.caption())),
@@ -103,15 +113,6 @@ pub async fn parse_message_content(
         MessageContent::MessagePaymentSuccessfulBot(_) => Ok((None, None)),
         MessageContent::MessagePinMessage(_) => Ok((None, None)),
         MessageContent::MessageUnsupported(_) => Ok((None, None)),
-    }
-}
-
-pub fn parse_file(file: &File) -> TelegramFile {
-    TelegramFile {
-        local_path: None,
-        file_name: None,
-        remote_id: file.remote().unique_id().clone(),
-        remote_file: file.remote().id().clone(),
     }
 }
 
