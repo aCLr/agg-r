@@ -6,4 +6,5 @@ CREATE TABLE files (
   remote_path text not null,
   remote_id text,
   file_name text
-)
+);
+create unique index files_unique_remote_id_record_id on files (remote_id, record_id);

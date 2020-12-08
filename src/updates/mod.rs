@@ -149,7 +149,7 @@ impl SourcesAggregator {
         loop {
             while let Some(updates) = self.updates_receiver.lock().await.recv().await {
                 debug!("new updates: {:?}", updates);
-                let insert_result = match &updates {
+                let updates_result = match &updates {
                     Ok(update) => match update {
                         SourceData::WebFeed(feed_data) => match &self.http_source {
                             None => {
@@ -168,9 +168,9 @@ impl SourcesAggregator {
                     },
                     Err(err) => Err(Error::DbError(err.to_string())),
                 };
-                match insert_result {
+                match updates_result {
                     Ok(ok_insert) => {
-                        debug!("processed updates; affected db rows: {}", ok_insert);
+                        debug!("processed updates: {}", ok_insert);
                         debug!("updates: {:?}", updates);
                     }
                     Err(err) => {

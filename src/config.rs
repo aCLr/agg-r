@@ -45,6 +45,8 @@ pub struct TelegramConfig {
     api_id: i64,
     api_hash: String,
     phone: String,
+    max_download_queue_size: usize,
+    files_directory: String,
 }
 
 impl Default for TelegramConfig {
@@ -56,6 +58,8 @@ impl Default for TelegramConfig {
             api_id: 0,
             api_hash: "".to_string(),
             phone: "".to_string(),
+            max_download_queue_size: 1,
+            files_directory: "".to_string(),
         }
     }
 }

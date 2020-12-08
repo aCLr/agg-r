@@ -1,38 +1,61 @@
 use super::TelegramUpdate;
 use crate::result::{Error, Result};
-use crate::updates::tg::TelegramFile;
+use crate::updates::tg::{TelegramFile, TelegramMessage};
 use tg_collector::tg_client::TgUpdate;
 use tg_collector::{FormattedText, MessageContent, TextEntity, TextEntityType};
 
 pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>> {
     Ok(match tg_update {
+        TgUpdate::FileDownloaded(update_file) => Some(TelegramUpdate::File(TelegramFile {
+            local_path: Some(update_file.file().local().path().clone()),
+            remote_file: update_file.file().id().to_string(),
+            remote_id: update_file.file().remote().unique_id().to_string(),
+            file_name: None,
+        })),
         TgUpdate::NewMessage(new_message) => {
-            let (content, files) = parse_message_content(new_message.message().content()).await?;
-            match content {
-                None => None,
-                Some(content) => Some(TelegramUpdate {
+            match parse_message_content(new_message.message().content()).await? {
+                (Some(content), Some(f)) => Some(TelegramUpdate::Message(TelegramMessage {
+                    message_id: new_message.message().id(),
+                    chat_id: new_message.message().chat_id(),
+                    date: Some(new_message.message().date()),
+                    content,
+                    file: Some(f),
+                })),
+                (Some(content), None) => Some(TelegramUpdate::Message(TelegramMessage {
                     message_id: new_message.message().id(),
                     chat_id: new_message.message().chat_id(),
                     date: Some(new_message.message().date()),
                     content,
                     file: None,
-                }),
+                })),
+                (None, Some(f)) => Some(TelegramUpdate::File(f)),
+                (None, None) => None,
             }
         }
         TgUpdate::MessageContent(message_content) => {
-            let (content, files) = parse_message_content(message_content.new_content()).await?;
-            Some(TelegramUpdate {
-                message_id: message_content.message_id(),
-                chat_id: message_content.chat_id(),
-                date: None,
-                content: content.unwrap_or_default(),
-                file: None,
-            })
+            match parse_message_content(message_content.new_content()).await? {
+                (Some(content), Some(f)) => Some(TelegramUpdate::Message(TelegramMessage {
+                    message_id: message_content.message_id(),
+                    chat_id: message_content.chat_id(),
+                    date: None,
+                    content,
+                    file: Some(f),
+                })),
+                (Some(content), None) => Some(TelegramUpdate::Message(TelegramMessage {
+                    message_id: message_content.message_id(),
+                    chat_id: message_content.chat_id(),
+                    date: None,
+                    content,
+                    file: None,
+                })),
+                (None, Some(f)) => Some(TelegramUpdate::File(f)),
+                (None, None) => None,
+            }
         }
-        TgUpdate::ChatPhoto(_) => return Err(Error::UpdateNotSupported),
-        TgUpdate::ChatTitle(_) => return Err(Error::UpdateNotSupported),
-        TgUpdate::Supergroup(_) => return Err(Error::UpdateNotSupported),
-        TgUpdate::SupergroupFullInfo(_) => return Err(Error::UpdateNotSupported),
+        TgUpdate::ChatPhoto(_) => Err(Error::UpdateNotSupported)?,
+        TgUpdate::ChatTitle(_) => Err(Error::UpdateNotSupported)?,
+        TgUpdate::Supergroup(_) => Err(Error::UpdateNotSupported)?,
+        TgUpdate::SupergroupFullInfo(_) => Err(Error::UpdateNotSupported)?,
     })
 }
 
@@ -51,7 +74,7 @@ pub async fn parse_message_content(
         MessageContent::MessageDocument(message_document) => {
             let mut file = TelegramFile {
                 local_path: None,
-                remote_file: message_document.document().document().remote().id().clone(),
+                remote_file: message_document.document().document().id().to_string(),
                 remote_id: message_document
                     .document()
                     .document()

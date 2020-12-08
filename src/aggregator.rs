@@ -56,6 +56,8 @@ impl<'a> AggregatorBuilder<'a> {
                 self.config.telegram().api_id().clone(),
                 self.config.telegram().api_hash(),
                 self.config.telegram().phone(),
+                self.config.telegram().max_download_queue_size().clone(),
+                self.config.telegram().files_directory(),
             )
             .with_database_directory(self.config.telegram().database_directory().as_str())
             .with_log_verbosity_level(self.config.telegram().log_verbosity_level().clone())

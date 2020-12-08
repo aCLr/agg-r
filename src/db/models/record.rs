@@ -78,7 +78,7 @@ impl NewRecord {
     pub async fn update_or_create(
         pool: &Pool,
         records_to_insert: Vec<Self>,
-    ) -> Result<Vec<(String, i32)>> {
+    ) -> Result<Vec<Record>> {
         let mut key_to_rec = records_to_insert
             .into_iter()
             .map(|f| ((f.source_record_id.clone(), f.source_id.clone()), f))
@@ -120,7 +120,6 @@ impl NewRecord {
             .values(key_to_rec.values().cloned().collect::<Vec<NewRecord>>())
             .on_conflict((records::source_record_id, records::source_id))
             .do_nothing()
-            .returning((records::source_record_id, records::source_id))
             .get_results_async(pool)
             .await?)
     }

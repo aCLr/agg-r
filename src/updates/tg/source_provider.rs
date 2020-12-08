@@ -1,9 +1,9 @@
+use super::handler::Handler;
 use super::parsers;
-use super::{SourceData, SourceProvider, TelegramSource};
+use super::TelegramSource;
 use crate::db::{models, Pool};
 use crate::result::{Error, Result};
-use crate::updates::tg::Handler;
-use crate::updates::Source;
+use crate::updates::{Source, SourceData, SourceProvider};
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ impl SourceProvider for TelegramSource {
 
     async fn run(
         &self,
-        db_pool: &Pool,
+        _db_pool: &Pool,
         updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>,
     ) {
         let mut tg_handler = Handler::new(updates_sender, self.collector.clone());
@@ -96,7 +96,17 @@ impl SourceProvider for TelegramSource {
                 }
             }
             debug!("get {} records for {}", parsed_records.len(), source.name);
-            models::NewRecord::update_or_create(db_pool, parsed_records).await?;
+            let records = models::NewRecord::update_or_create(db_pool, parsed_records).await?;
+            for rec in &records {
+                let rec_files =
+                    files_by_rec.get(&(rec.source_record_id.parse().unwrap(), rec.source_id));
+                match rec_files {
+                    None => {}
+                    Some(f) => {
+                        self.handle_file_update(db_pool, f).await;
+                    }
+                }
+            }
         }
         Ok(())
     }

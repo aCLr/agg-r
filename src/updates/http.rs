@@ -172,7 +172,11 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
         if affected.len() > 0 {
             let mut tasks = vec![];
             updates.updates.iter().for_each(|u| {
-                if affected.contains(&(u.guid.clone(), source.id)) {
+                if affected
+                    .iter()
+                    .find(|r| r.source_record_id == u.guid && r.source_id == source.id)
+                    .is_some()
+                {
                     tasks.push(models::Record::set_external_ink(
                         db_pool,
                         u.guid.clone(),
@@ -194,7 +198,7 @@ impl SourceProvider for HttpSource {
         Source::Web
     }
 
-    async fn synchronize(&self, db_pool: &Pool, secs_depth: i32) -> Result<()> {
+    async fn synchronize(&self, _db_pool: &Pool, _secs_depth: i32) -> Result<()> {
         // nothing to sync with http source
         Ok(())
     }
