@@ -5,7 +5,7 @@ pub enum Error {
     DbError(String),
     HttpCollectorError(http_collector::result::Error),
     TgCollectorError(tg_collector::result::Error),
-    UpdateNotSupported,
+    UpdateNotSupported(String),
     SourceKindConflict(String),
     SourceNotFound,
     SourceCreationError,

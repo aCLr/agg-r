@@ -1,67 +1,59 @@
-use super::TelegramUpdate;
+use super::{TelegramUpdate, TELEGRAM};
 use crate::result::{Error, Result};
-use crate::updates::tg::{TelegramFile, TelegramMessage};
+use crate::updates::tg::{
+    FilePath, FileType, ImageMeta, TelegramFile, TelegramFileWithMeta, TelegramMessage,
+};
 use tg_collector::tg_client::TgUpdate;
-use tg_collector::{FormattedText, MessageContent, TextEntity, TextEntityType};
+use tg_collector::types::Channel;
+use tg_collector::{FormattedText, MessageContent, RObject, TextEntity, TextEntityType};
 
+/// Parses updates from `tg_collector` to `TelegramUpdate` struct
 pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>> {
     Ok(match tg_update {
-        TgUpdate::FileDownloaded(update_file) => Some(TelegramUpdate::File(TelegramFile {
-            local_path: Some(update_file.file().local().path().clone()),
-            remote_file: update_file.file().id().to_string(),
-            remote_id: update_file.file().remote().unique_id().to_string(),
-            file_name: None,
-        })),
+        TgUpdate::FileDownloaded(update_file) => {
+            Some(TelegramUpdate::FileDownloadFinished(TelegramFile {
+                local_path: update_file.file().local().path().clone(),
+                remote_file: update_file.file().id().to_string(),
+                remote_id: update_file.file().remote().unique_id().to_string(),
+            }))
+        }
         TgUpdate::NewMessage(new_message) => {
-            match parse_message_content(new_message.message().content()).await? {
-                (Some(content), Some(f)) => Some(TelegramUpdate::Message(TelegramMessage {
+            let (content, files) = parse_message_content(new_message.message().content()).await?;
+            if content.is_none() && files.is_none() {
+                None
+            } else {
+                Some(TelegramUpdate::Message(TelegramMessage {
                     message_id: new_message.message().id(),
                     chat_id: new_message.message().chat_id(),
                     date: Some(new_message.message().date()),
                     content,
-                    file: Some(f),
-                })),
-                (Some(content), None) => Some(TelegramUpdate::Message(TelegramMessage {
-                    message_id: new_message.message().id(),
-                    chat_id: new_message.message().chat_id(),
-                    date: Some(new_message.message().date()),
-                    content,
-                    file: None,
-                })),
-                (None, Some(f)) => Some(TelegramUpdate::File(f)),
-                (None, None) => None,
+                    files,
+                }))
             }
         }
         TgUpdate::MessageContent(message_content) => {
-            match parse_message_content(message_content.new_content()).await? {
-                (Some(content), Some(f)) => Some(TelegramUpdate::Message(TelegramMessage {
+            let (content, files) = parse_message_content(message_content.new_content()).await?;
+
+            if content.is_none() && files.is_none() {
+                None
+            } else {
+                Some(TelegramUpdate::Message(TelegramMessage {
                     message_id: message_content.message_id(),
                     chat_id: message_content.chat_id(),
                     date: None,
                     content,
-                    file: Some(f),
-                })),
-                (Some(content), None) => Some(TelegramUpdate::Message(TelegramMessage {
-                    message_id: message_content.message_id(),
-                    chat_id: message_content.chat_id(),
-                    date: None,
-                    content,
-                    file: None,
-                })),
-                (None, Some(f)) => Some(TelegramUpdate::File(f)),
-                (None, None) => None,
+                    files,
+                }))
             }
         }
-        TgUpdate::ChatPhoto(_) => Err(Error::UpdateNotSupported)?,
-        TgUpdate::ChatTitle(_) => Err(Error::UpdateNotSupported)?,
-        TgUpdate::Supergroup(_) => Err(Error::UpdateNotSupported)?,
-        TgUpdate::SupergroupFullInfo(_) => Err(Error::UpdateNotSupported)?,
+        TgUpdate::ChatPhoto(photo) => Err(Error::UpdateNotSupported(photo.td_name().to_string()))?,
+        TgUpdate::ChatTitle(title) => Err(Error::UpdateNotSupported(title.td_name().to_string()))?,
     })
 }
 
 pub async fn parse_message_content(
     message: &MessageContent,
-) -> Result<(Option<String>, Option<TelegramFile>)> {
+) -> Result<(Option<String>, Option<Vec<TelegramFileWithMeta>>)> {
     match message {
         MessageContent::MessageText(text) => Ok((Some(parse_formatted_text(text.text())), None)),
         MessageContent::MessageAnimation(animation) => {
@@ -72,63 +64,108 @@ pub async fn parse_message_content(
             Ok((Some(parse_formatted_text(audio.caption())), None))
         }
         MessageContent::MessageDocument(message_document) => {
-            let mut file = TelegramFile {
-                local_path: None,
-                remote_file: message_document.document().document().id().to_string(),
-                remote_id: message_document
-                    .document()
-                    .document()
-                    .remote()
-                    .unique_id()
-                    .clone(),
+            let file = TelegramFileWithMeta {
+                path: FilePath::new(message_document.document().document()),
+                file_type: FileType::Document,
                 file_name: Some(message_document.document().file_name().clone()),
             };
-            file.file_name = Some(message_document.document().file_name().clone());
             Ok((
                 Some(parse_formatted_text(message_document.caption())),
-                Some(file),
+                Some(vec![file]),
             ))
         }
         MessageContent::MessagePhoto(photo) => {
-            Ok((Some(parse_formatted_text(photo.caption())), None))
+            let files = photo
+                .photo()
+                .sizes()
+                .iter()
+                .map(|s| TelegramFileWithMeta {
+                    file_type: FileType::Image(ImageMeta {
+                        width: s.width(),
+                        height: s.height(),
+                    }),
+                    path: FilePath::new(s.photo()),
+                    file_name: None,
+                })
+                .collect();
+            Ok((Some(parse_formatted_text(photo.caption())), Some(files)))
         }
         MessageContent::MessageVideo(video) => {
             Ok((Some(parse_formatted_text(video.caption())), None))
         }
 
-        MessageContent::MessageChatChangePhoto(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageChatChangePhoto(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
 
-        MessageContent::MessagePoll(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatChangeTitle(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatDeletePhoto(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatJoinByLink(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatUpgradeFrom(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageChatUpgradeTo(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageContact(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageContactRegistered(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageCustomServiceAction(_) => Err(Error::UpdateNotSupported),
-        // MessageContent::MessageDice(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageExpiredPhoto(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageExpiredVideo(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageInvoice(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageLocation(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessagePassportDataReceived(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageScreenshotTaken(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageSticker(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageSupergroupChatCreate(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessagePoll(u) => Err(Error::UpdateNotSupported(u.td_name().to_string())),
+        MessageContent::MessageChatChangeTitle(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageChatDeletePhoto(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageChatJoinByLink(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageChatUpgradeFrom(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageChatUpgradeTo(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageContact(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageContactRegistered(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageCustomServiceAction(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageExpiredPhoto(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageExpiredVideo(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageInvoice(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageLocation(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessagePassportDataReceived(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageScreenshotTaken(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageSticker(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageSupergroupChatCreate(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
 
-        MessageContent::MessageVenue(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageVenue(u) => Err(Error::UpdateNotSupported(u.td_name().to_string())),
 
-        MessageContent::MessageVideoNote(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageVoiceNote(_) => Err(Error::UpdateNotSupported),
-        MessageContent::MessageWebsiteConnected(_) => Err(Error::UpdateNotSupported),
+        MessageContent::MessageVideoNote(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageVoiceNote(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
+        MessageContent::MessageWebsiteConnected(u) => {
+            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        }
 
         MessageContent::_Default(_) => Ok((None, None)),
         MessageContent::MessageBasicGroupChatCreate(_) => Ok((None, None)),
         MessageContent::MessageCall(_) => Ok((None, None)),
         MessageContent::MessageChatAddMembers(_) => Ok((None, None)),
         MessageContent::MessageChatDeleteMember(_) => Ok((None, None)),
-        MessageContent::MessageChatSetTtl(_) => Ok((None, None)),
+        MessageContent::MessageChatSetTtl(u) => Ok((None, None)),
         MessageContent::MessageGame(_) => Ok((None, None)),
         MessageContent::MessageGameScore(_) => Ok((None, None)),
         MessageContent::MessagePassportDataSent(_) => Ok((None, None)),
@@ -218,6 +255,15 @@ fn make_entities_stack(entities: &Vec<TextEntity>) -> Vec<(usize, String)> {
     stack
 }
 
+pub(super) fn channel_to_new_source(channel: Channel) -> crate::db::models::NewSource {
+    crate::db::models::NewSource {
+        name: channel.title,
+        origin: channel.chat_id.to_string(),
+        kind: TELEGRAM.to_string(),
+        image: None,
+        external_link: channel.username,
+    }
+}
 #[cfg(test)]
 mod tests {
     use crate::updates::tg::parse_message_text;

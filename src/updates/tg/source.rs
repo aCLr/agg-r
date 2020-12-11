@@ -4,10 +4,9 @@ use crate::result::{Error, Result};
 use std::path::Path;
 use std::sync::Arc;
 use tg_collector::tg_client::TgClient;
-use tg_collector::types::Channel;
 use tokio::sync::RwLock;
 
-const TELEGRAM: &'static str = "TELEGRAM";
+pub(super) const TELEGRAM: &'static str = "TELEGRAM";
 
 pub struct TelegramSourceBuilder {
     api_id: i64,
@@ -66,8 +65,8 @@ impl TelegramSourceBuilder {
     }
 }
 pub struct TelegramSource {
-    pub(crate) collector: Arc<RwLock<TgClient>>,
-    pub(crate) files_directory: String,
+    pub(super) collector: Arc<RwLock<TgClient>>,
+    pub(super) files_directory: String,
 }
 
 impl TelegramSource {
@@ -87,34 +86,90 @@ impl TelegramSource {
         )
     }
 
-    pub(crate) fn channel_to_new_source(channel: Channel) -> models::NewSource {
-        models::NewSource {
-            name: channel.title,
-            origin: channel.chat_id.to_string(),
-            kind: TELEGRAM.to_string(),
-            image: None,
-            external_link: channel.username,
+    /// Handles new `TelegramFile`.
+    ///
+    /// Here is `TelegramFile` lifecycle:
+    ///     1. new file found during `TelegramUpdate::Message` parse
+    ///     2. file downloads with `handle_file_update`
+    ///     3. `TelegramUpdate::File` update received when download finished
+    ///     4. file moves to `files_directory`
+
+    pub(super) async fn handle_new_files(
+        &self,
+        db_pool: &Pool,
+        files: &Vec<TelegramFileWithMeta>,
+        record_id: i32,
+    ) -> Result<()> {
+        let db_files = files
+            .iter()
+            .map(|file| {
+                let meta: Option<String>;
+                let type_: String;
+                match &file.file_type {
+                    FileType::Document => {
+                        type_ = "DOCUMENT".to_string();
+                        meta = None;
+                    }
+                    FileType::Image(image_meta) => {
+                        type_ = "IMAGE".to_string();
+                        meta = serde_json::to_string(image_meta).ok();
+                    }
+                };
+                models::NewFile {
+                    record_id: record_id,
+                    kind: TELEGRAM.to_string(),
+                    local_path: file.path.local_path.clone(),
+                    remote_path: file.path.remote_file.clone(),
+                    remote_id: Some(file.path.remote_id.clone()),
+                    file_name: file.file_name.clone(),
+                    type_,
+                    meta,
+                }
+            })
+            .collect();
+        models::NewFile::update_or_create(db_pool, db_files).await?;
+        for f in files {
+            match self
+                .collector
+                .write()
+                .await
+                .download_file(f.path.remote_file.parse().unwrap())
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => error!("telegram file download failed: {}", e),
+            }
         }
+        Ok(())
     }
 
-    pub(crate) async fn handle_file_update(&self, db_pool: &Pool, file: &TelegramFile) {
-        match &file.local_path {
-            None => {
-                self.collector
-                    .write()
-                    .await
-                    .download_file(file.remote_file.parse().unwrap())
-                    .await?;
+    pub(super) async fn handle_file_downloaded(
+        &self,
+        db_pool: &Pool,
+        file: &TelegramFile,
+    ) -> Result<()> {
+        let db_file = models::File::get_file_by_remote_id(db_pool, file.remote_id.clone()).await?;
+        match db_file {
+            None => warn!("unknown telegram file: {:?}", file),
+            Some(mut db_file) => {
+                let file_name = Path::new(file.local_path.as_str()).file_name().unwrap();
+                let new_path = Path::new(self.files_directory.as_str()).join(&file_name);
+                tokio::fs::rename(&file.local_path, &new_path).await?;
+                // TODO: cross-platform?
+                db_file.local_path = Some(new_path.into_os_string().into_string().unwrap());
+                match db_file.file_name {
+                    None => {
+                        db_file.file_name = Some(file_name.to_os_string().into_string().unwrap())
+                    }
+                    Some(_) => {}
+                }
+                db_file.save(db_pool).await?;
             }
-            Some(path) => {
-                let new_path = Path::new(self.files_directory.as_str())
-                    .join(Path::new(path).file_name().unwrap());
-                tokio::fs::rename(path, new_path).await?;
-            }
-        };
+        }
+        Ok(())
     }
 
-    pub(crate) async fn handle_record_inserted(
+    pub(super) async fn handle_record_inserted(
         &self,
         db_pool: &Pool,
         chat_id: i64,

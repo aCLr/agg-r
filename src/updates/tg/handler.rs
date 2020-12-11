@@ -7,6 +7,9 @@ use tg_collector::tg_client::{TgClient, TgUpdate};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::spawn;
 
+/// Handler interacts with tdlib using `tg_collector` crate.
+/// It initializes updates listener and pass all updates from `tg_collector` to specified sender
+
 #[derive(Clone)]
 pub struct Handler {
     sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>,
@@ -16,10 +19,12 @@ pub struct Handler {
 }
 
 impl Handler {
+    /// Creates new Handler with specified
     pub fn new(
         sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>,
         tg: Arc<RwLock<TgClient>>,
     ) -> Self {
+        // TODO: configure channel size
         let (orig_sender, orig_receiver) = mpsc::channel::<TgUpdate>(2000);
         Self {
             sender,

@@ -15,4 +15,5 @@ pub mod config;
 pub mod db;
 pub mod result;
 mod schema;
+mod tools;
 mod updates;

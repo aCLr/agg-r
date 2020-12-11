@@ -7,6 +7,9 @@ table! {
         remote_path -> Text,
         remote_id -> Nullable<Text>,
         file_name -> Nullable<Text>,
+        #[sql_name = "type"]
+        type_ -> Text,
+        meta -> Nullable<Text>,
     }
 }
 

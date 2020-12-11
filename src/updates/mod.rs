@@ -169,9 +169,9 @@ impl SourcesAggregator {
                     Err(err) => Err(Error::DbError(err.to_string())),
                 };
                 match updates_result {
-                    Ok(ok_insert) => {
-                        debug!("processed updates: {}", ok_insert);
-                        debug!("updates: {:?}", updates);
+                    Ok(ok_processed) => {
+                        debug!("processed updates: {}", ok_processed);
+                        trace!("updates: {:?}", updates);
                     }
                     Err(err) => {
                         error!("{}", err);
