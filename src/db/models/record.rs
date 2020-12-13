@@ -41,7 +41,7 @@ impl Record {
     pub async fn get_all(db_pool: &Pool, limit: i64, offset: i32) -> Result<Vec<Self>> {
         Ok(records::table
             .order(records::date.desc())
-            .limit(limit.into())
+            .limit(limit)
             .offset(offset.into())
             .load_async::<Record>(db_pool)
             .await?)
@@ -56,7 +56,7 @@ impl Record {
         Ok(records::table
             .filter(records::source_id.eq(source_id))
             .order(records::date.desc())
-            .limit(limit.into())
+            .limit(limit)
             .offset(offset.into())
             .load_async::<Record>(db_pool)
             .await?)
@@ -81,7 +81,7 @@ impl NewRecord {
     ) -> Result<Vec<Record>> {
         let mut key_to_rec = records_to_insert
             .into_iter()
-            .map(|f| ((f.source_record_id.clone(), f.source_id.clone()), f))
+            .map(|f| ((f.source_record_id.clone(), f.source_id), f))
             .collect::<HashMap<(String, i32), Self>>();
         for record in records::table
             .filter(
@@ -96,7 +96,7 @@ impl NewRecord {
             .load_async::<Record>(pool)
             .await?
         {
-            let record_id = record.id.clone();
+            let record_id = record.id;
             key_to_rec
                 .remove(&(record.source_record_id, record.source_id))
                 .map(|r| async move {

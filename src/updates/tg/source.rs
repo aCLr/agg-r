@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tg_collector::tg_client::TgClient;
 use tokio::sync::RwLock;
 
-pub(super) const TELEGRAM: &'static str = "TELEGRAM";
+pub(super) const TELEGRAM: &str = "TELEGRAM";
 
 pub struct TelegramSourceBuilder {
     api_id: i64,
@@ -15,6 +15,7 @@ pub struct TelegramSourceBuilder {
     log_verbosity_level: i32,
     database_directory: String,
     max_download_queue_size: usize,
+    log_download_state_secs_interval: u64,
     files_directory: String,
 }
 
@@ -25,10 +26,12 @@ impl TelegramSourceBuilder {
         phone_number: &str,
         max_download_queue_size: usize,
         files_directory: &str,
+        log_download_state_secs_interval: u64,
     ) -> Self {
         Self {
             api_id,
             max_download_queue_size,
+            log_download_state_secs_interval,
             files_directory: files_directory.to_string(),
             phone_number: phone_number.to_string(),
             api_hash: api_hash.to_string(),
@@ -49,12 +52,13 @@ impl TelegramSourceBuilder {
 
     pub fn build(&self) -> TelegramSource {
         let tg_conf = tg_collector::config::Config {
-            log_verbosity_level: self.log_verbosity_level.clone(),
+            log_verbosity_level: self.log_verbosity_level,
             database_directory: self.database_directory.clone(),
-            api_id: self.api_id.clone(),
+            api_id: self.api_id,
             api_hash: self.api_hash.clone(),
+            log_download_state_secs_interval: self.log_download_state_secs_interval,
             phone_number: self.phone_number.clone(),
-            max_download_queue_size: self.max_download_queue_size.clone(),
+            max_download_queue_size: self.max_download_queue_size,
         };
         TelegramSource {
             collector: Arc::new(RwLock::new(tg_collector::tg_client::TgClient::new(
@@ -76,6 +80,7 @@ impl TelegramSource {
         phone_number: &str,
         max_download_queue_size: usize,
         files_directory: &str,
+        log_download_state_secs_interval: u64,
     ) -> TelegramSourceBuilder {
         TelegramSourceBuilder::new(
             api_id,
@@ -83,6 +88,7 @@ impl TelegramSource {
             phone_number,
             max_download_queue_size,
             files_directory,
+            log_download_state_secs_interval,
         )
     }
 
@@ -97,7 +103,7 @@ impl TelegramSource {
     pub(super) async fn handle_new_files(
         &self,
         db_pool: &Pool,
-        files: &Vec<TelegramFileWithMeta>,
+        files: &[TelegramFileWithMeta],
         record_id: i32,
     ) -> Result<()> {
         let db_files = files
@@ -105,10 +111,16 @@ impl TelegramSource {
             .map(|file| {
                 let meta: Option<String>;
                 let type_: String;
+
+                // TODO add posibility to disable particular types from config
                 match &file.file_type {
                     FileType::Document => {
                         type_ = "DOCUMENT".to_string();
                         meta = None;
+                    }
+                    FileType::Animation(animation_meta) => {
+                        type_ = "ANIMATION".to_string();
+                        meta = serde_json::to_string(animation_meta).ok();
                     }
                     FileType::Image(image_meta) => {
                         type_ = "IMAGE".to_string();
@@ -116,12 +128,12 @@ impl TelegramSource {
                     }
                 };
                 models::NewFile {
-                    record_id: record_id,
                     kind: TELEGRAM.to_string(),
                     local_path: file.path.local_path.clone(),
                     remote_path: file.path.remote_file.clone(),
                     remote_id: Some(file.path.remote_id.clone()),
                     file_name: file.file_name.clone(),
+                    record_id,
                     type_,
                     meta,
                 }
@@ -186,8 +198,7 @@ impl TelegramSource {
                     .get_message_link(chat_id, message_id)
                     .await?;
                 let (sri, si) = created.first().unwrap();
-                models::Record::set_external_ink(db_pool, sri.clone(), si.clone(), message_link)
-                    .await?;
+                models::Record::set_external_ink(db_pool, sri.clone(), *si, message_link).await?;
                 Ok(1)
             }
             x => {

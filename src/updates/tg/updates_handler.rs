@@ -14,7 +14,7 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
         updates: &TelegramUpdate,
     ) -> Result<models::Source> {
         match updates {
-            TelegramUpdate::FileDownloadFinished(f) => Err(Error::UpdateNotSupported(
+            TelegramUpdate::FileDownloadFinished(_) => Err(Error::UpdateNotSupported(
                 "FileDownloadFinished".to_string(),
             )),
             TelegramUpdate::Message(message) => {
@@ -41,7 +41,7 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
     async fn process_updates(&self, db_pool: &Pool, updates: &TelegramUpdate) -> Result<usize> {
         match updates {
             TelegramUpdate::FileDownloadFinished(file) => {
-                self.handle_file_downloaded(db_pool, file).await;
+                self.handle_file_downloaded(db_pool, file).await?;
                 Ok(1)
             }
             TelegramUpdate::Message(message) => {
@@ -51,7 +51,7 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                     0 => self.create_source(db_pool, updates).await?,
                     _ => sources.first().unwrap().clone(),
                 };
-                let message_id = message.message_id.clone();
+                let message_id = message.message_id;
                 let created = models::NewRecord::update_or_create(
                     db_pool,
                     vec![models::NewRecord {
@@ -59,7 +59,7 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                         image: None,
                         date: message
                             .date
-                            .map(|d| chrono::NaiveDateTime::from_timestamp(d.clone(), 0)),
+                            .map(|d| chrono::NaiveDateTime::from_timestamp(d, 0)),
                         source_record_id: message_id.to_string(),
                         source_id: source.id,
                         content: message.content.clone().unwrap_or_default(),
@@ -80,7 +80,7 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                     Some(rec) if message.files.is_some() => {
                         let files = message.files.as_ref().unwrap();
                         let (handle_file, handle_record) = tokio::join!(
-                            self.handle_new_files(db_pool, files, rec.id.clone()),
+                            self.handle_new_files(db_pool, files, rec.id),
                             self.handle_record_inserted(
                                 db_pool,
                                 message.chat_id,

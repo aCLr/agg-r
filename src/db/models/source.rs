@@ -47,9 +47,9 @@ impl Source {
             Err(te) => match &te {
                 tokio_diesel::AsyncError::Error(de) => match de {
                     diesel::NotFound => Ok(vec![]),
-                    _ => Err(te)?,
+                    _ => Err(te.into()),
                 },
-                _ => Err(te)?,
+                _ => Err(te.into()),
             },
             Ok(s) => Ok(s),
         }

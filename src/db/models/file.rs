@@ -39,15 +39,16 @@ impl File {
             .get_results_async(db_pool)
             .await
         {
-            Ok(mut found_files) if found_files.len() == 1 => Ok(found_files.pop()),
-            Ok(found_files) if found_files.len() > 1 => Err(Error::DbError(format!(
-                "found multiple files for id {}",
-                remote_id
-            ))),
-            Ok(found_files) if found_files.len() == 0 => Ok(None),
-            Ok(r) => unreachable!("unexpected result: {:?}", r),
+            Ok(mut found_files) => match found_files.len() {
+                0 => Ok(None),
+                1 => Ok(found_files.pop()),
+                _ => Err(Error::DbError(format!(
+                    "found multiple files for id {}",
+                    remote_id
+                ))),
+            },
             Err(tokio_diesel::AsyncError::Error(diesel::NotFound)) => Ok(None),
-            Err(e) => Err(e)?,
+            Err(e) => Err(e.into()),
         }
     }
 }
@@ -69,7 +70,7 @@ impl NewFile {
     pub async fn update_or_create(db_pool: &Pool, files_to_insert: Vec<Self>) -> Result<()> {
         let mut key_to_files: HashMap<(String, i32), Vec<Self>> = HashMap::new();
         for file in files_to_insert {
-            let key = (file.remote_id.clone().unwrap(), file.record_id.clone());
+            let key = (file.remote_id.clone().unwrap(), file.record_id);
             let existed = key_to_files.get_mut(&key);
             match existed {
                 Some(files) => {
@@ -93,7 +94,7 @@ impl NewFile {
             .load_async::<File>(db_pool)
             .await?
         {
-            let file_id = file.id.clone();
+            let file_id = file.id;
             key_to_files
                 .remove(&(file.remote_id.unwrap(), file.record_id))
                 .map(|files| async move {

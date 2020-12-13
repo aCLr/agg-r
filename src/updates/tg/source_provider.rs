@@ -53,7 +53,7 @@ impl SourceProvider for TelegramSource {
         debug!("got {} channels to sync", channels.len());
         for channel in channels {
             debug!("going to sync {}", channel.title);
-            let chat_id = channel.chat_id.clone();
+            let chat_id = channel.chat_id;
             let source = parsers::channel_to_new_source(channel);
             let source = source.save(db_pool).await?;
             let mut messages_stream = Box::pin(TgClient::get_chat_history_stream(
@@ -78,7 +78,7 @@ impl SourceProvider for TelegramSource {
                             parsed_records.push(record);
                         };
                         let mut on_file = |f| {
-                            files_by_rec.insert((message.id().clone(), source.id), f);
+                            files_by_rec.insert((message.id(), source.id), f);
                         };
                         match parsers::parse_message_content(message.content()).await {
                             Ok((Some(c), Some(f))) => {
@@ -103,7 +103,9 @@ impl SourceProvider for TelegramSource {
                 match rec_files {
                     None => {}
                     Some(f) => {
-                        self.handle_new_files(db_pool, f, rec.id).await;
+                        if let Err(e) = self.handle_new_files(db_pool, f, rec.id).await {
+                            error!("{:?}", e)
+                        };
                     }
                 }
             }

@@ -1,8 +1,6 @@
 use super::{TelegramUpdate, TELEGRAM};
 use crate::result::{Error, Result};
-use crate::updates::tg::{
-    FilePath, FileType, ImageMeta, TelegramFile, TelegramFileWithMeta, TelegramMessage,
-};
+use crate::updates::tg::{FilePath, FileType, TelegramFile, TelegramFileWithMeta, TelegramMessage};
 use tg_collector::tg_client::TgUpdate;
 use tg_collector::types::Channel;
 use tg_collector::{FormattedText, MessageContent, RObject, TextEntity, TextEntityType};
@@ -46,8 +44,12 @@ pub async fn parse_update(tg_update: &TgUpdate) -> Result<Option<TelegramUpdate>
                 }))
             }
         }
-        TgUpdate::ChatPhoto(photo) => Err(Error::UpdateNotSupported(photo.td_name().to_string()))?,
-        TgUpdate::ChatTitle(title) => Err(Error::UpdateNotSupported(title.td_name().to_string()))?,
+        TgUpdate::ChatPhoto(photo) => {
+            return Err(Error::UpdateNotSupported(photo.td_name().to_string()))
+        }
+        TgUpdate::ChatTitle(title) => {
+            return Err(Error::UpdateNotSupported(title.td_name().to_string()))
+        }
     })
 }
 
@@ -56,9 +58,16 @@ pub async fn parse_message_content(
 ) -> Result<(Option<String>, Option<Vec<TelegramFileWithMeta>>)> {
     match message {
         MessageContent::MessageText(text) => Ok((Some(parse_formatted_text(text.text())), None)),
-        MessageContent::MessageAnimation(animation) => {
-            let files = None;
-            Ok((Some(parse_formatted_text(animation.caption())), files))
+        MessageContent::MessageAnimation(message_animation) => {
+            let file = TelegramFileWithMeta {
+                path: FilePath::new(message_animation.animation().animation()),
+                file_type: FileType::Animation(message_animation.animation().into()),
+                file_name: Some(message_animation.animation().file_name().clone()),
+            };
+            Ok((
+                Some(parse_formatted_text(message_animation.caption())),
+                Some(vec![file]),
+            ))
         }
         MessageContent::MessageAudio(audio) => {
             Ok((Some(parse_formatted_text(audio.caption())), None))
@@ -80,10 +89,7 @@ pub async fn parse_message_content(
                 .sizes()
                 .iter()
                 .map(|s| TelegramFileWithMeta {
-                    file_type: FileType::Image(ImageMeta {
-                        width: s.width(),
-                        height: s.height(),
-                    }),
+                    file_type: FileType::Image(s.into()),
                     path: FilePath::new(s.photo()),
                     file_name: None,
                 })
@@ -141,8 +147,13 @@ pub async fn parse_message_content(
         MessageContent::MessageScreenshotTaken(u) => {
             Err(Error::UpdateNotSupported(u.td_name().to_string()))
         }
-        MessageContent::MessageSticker(u) => {
-            Err(Error::UpdateNotSupported(u.td_name().to_string()))
+        MessageContent::MessageSticker(message_sticker) => {
+            let file = TelegramFileWithMeta {
+                path: FilePath::new(message_sticker.sticker().sticker()),
+                file_type: FileType::Image(message_sticker.sticker().into()),
+                file_name: None,
+            };
+            Ok((None, Some(vec![file])))
         }
         MessageContent::MessageSupergroupChatCreate(u) => {
             Err(Error::UpdateNotSupported(u.td_name().to_string()))
@@ -165,7 +176,7 @@ pub async fn parse_message_content(
         MessageContent::MessageCall(_) => Ok((None, None)),
         MessageContent::MessageChatAddMembers(_) => Ok((None, None)),
         MessageContent::MessageChatDeleteMember(_) => Ok((None, None)),
-        MessageContent::MessageChatSetTtl(u) => Ok((None, None)),
+        MessageContent::MessageChatSetTtl(_) => Ok((None, None)),
         MessageContent::MessageGame(_) => Ok((None, None)),
         MessageContent::MessageGameScore(_) => Ok((None, None)),
         MessageContent::MessagePassportDataSent(_) => Ok((None, None)),
@@ -209,7 +220,7 @@ pub fn parse_formatted_text(formatted_text: &FormattedText) -> String {
     result_text
 }
 
-fn make_entities_stack(entities: &Vec<TextEntity>) -> Vec<(usize, String)> {
+fn make_entities_stack(entities: &[TextEntity]) -> Vec<(usize, String)> {
     let mut stack = Vec::new();
     for entity in entities {
         let formatting = match entity.type_() {
@@ -239,15 +250,9 @@ fn make_entities_stack(entities: &Vec<TextEntity>) -> Vec<(usize, String)> {
             TextEntityType::Mention(_) => None,
             TextEntityType::MentionName(_) => None,
         };
-        match formatting {
-            Some((start_tag, end_tag)) => {
-                stack.push((entity.offset().clone() as usize, start_tag));
-                stack.push((
-                    (entity.offset() + entity.length()).clone() as usize,
-                    end_tag,
-                ));
-            }
-            None => {}
+        if let Some((start_tag, end_tag)) = formatting {
+            stack.push((entity.offset() as usize, start_tag));
+            stack.push(((entity.offset() + entity.length()) as usize, end_tag));
         }
     }
     stack.sort_by_key(|(i, _)| *i);

@@ -55,9 +55,8 @@ impl Handler {
                         };
                         let mut local_sender = sender.lock().await;
 
-                        match local_sender.send(parsed_update).await {
-                            Err(err) => warn!("{}", err),
-                            Ok(_) => {}
+                        if let Err(err) = local_sender.send(parsed_update).await {
+                            warn!("{}", err)
                         }
                     }
                 }

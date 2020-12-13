@@ -47,6 +47,7 @@ pub struct TelegramConfig {
     phone: String,
     max_download_queue_size: usize,
     files_directory: String,
+    log_download_state_secs_interval: u64,
 }
 
 impl Default for TelegramConfig {
@@ -60,6 +61,7 @@ impl Default for TelegramConfig {
             phone: "".to_string(),
             max_download_queue_size: 1,
             files_directory: "".to_string(),
+            log_download_state_secs_interval: 0,
         }
     }
 }

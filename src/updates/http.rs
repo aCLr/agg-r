@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio::time::Duration;
 
 // TODO: enum?
-const WEB: &'static str = "WEB";
+const WEB: &str = "WEB";
 
 impl From<Feed> for FeedUpdate {
     fn from(feed_update: Feed) -> Self {
@@ -64,7 +64,7 @@ impl ResultsHandler for Handler {
             Err(err) => Err(Error::HttpCollectorError(err)),
         };
         let mut local = self.sender.lock().await;
-        if let Err(_) = local.send(update).await {
+        if local.send(update).await.is_err() {
             error!("updates receiver dropped");
             return;
         }
@@ -94,6 +94,11 @@ pub struct HttpSourceBuilder {
     scrape_source_secs_interval: i32,
 }
 
+impl Default for HttpSourceBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl HttpSourceBuilder {
     pub fn new() -> Self {
         Self {
@@ -114,8 +119,8 @@ impl HttpSourceBuilder {
 
     pub fn build(&self) -> HttpSource {
         HttpSource {
-            sleep_secs: self.sleep_secs.clone(),
-            scrape_source_secs_interval: self.scrape_source_secs_interval.clone(),
+            sleep_secs: self.sleep_secs,
+            scrape_source_secs_interval: self.scrape_source_secs_interval,
             collector: Arc::new(HttpCollector::new()),
         }
     }
@@ -159,23 +164,22 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
                 .updates
                 .iter()
                 .map(|u| models::NewRecord {
-                    date: Some(u.pub_date.clone()),
+                    date: Some(u.pub_date),
                     title: u.title.clone(),
                     source_record_id: u.guid.clone(),
-                    source_id: source.id.clone(),
+                    source_id: source.id,
                     content: u.content.clone(),
                     image: u.image_link.clone(),
                 })
                 .collect::<Vec<models::NewRecord>>(),
         )
         .await?;
-        if affected.len() > 0 {
+        if affected.is_empty() {
             let mut tasks = vec![];
             updates.updates.iter().for_each(|u| {
                 if affected
                     .iter()
-                    .find(|r| r.source_record_id == u.guid && r.source_id == source.id)
-                    .is_some()
+                    .any(|r| r.source_record_id == u.guid && r.source_id == source.id)
                 {
                     tasks.push(models::Record::set_external_ink(
                         db_pool,
@@ -209,8 +213,8 @@ impl SourceProvider for HttpSource {
         updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>,
     ) {
         let (sources_sender, sources_receiver) = mpsc::channel(2000);
-        let sleep_secs = self.sleep_secs.clone();
-        let scrape_source_secs_interval = self.scrape_source_secs_interval.clone();
+        let sleep_secs = self.sleep_secs;
+        let scrape_source_secs_interval = self.scrape_source_secs_interval;
         let pool = db_pool.clone();
         tokio::spawn(async move {
             sources_gen(
@@ -234,7 +238,7 @@ impl SourceProvider for HttpSource {
         let feeds = match self.collector.detect_feeds(query.as_str()).await {
             Ok(feeds) => feeds,
             Err(CollectorError::RequestError) => vec![],
-            Err(e) => Err(e)?,
+            Err(e) => return Err(e.into()),
         };
         let new_sources = models::NewSource::save_bulk(
             db_pool,
@@ -271,9 +275,8 @@ async fn sources_gen(
         match get_sources(db_pool, &source_check_period).await {
             Ok(sources) => {
                 debug!("found sources for scrape: {:?}", sources);
-                match sender.send(sources).await {
-                    Err(err) => error!("{}", err),
-                    Ok(_) => {}
+                if let Err(err) = sender.send(sources).await {
+                    error!("{}", err)
                 };
             }
             Err(e) => error!("{}", e),

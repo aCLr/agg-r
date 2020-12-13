@@ -48,7 +48,7 @@ pub struct SourcesAggregator {
 
 impl SourcesAggregator {
     pub fn builder() -> UpdatesHandlerBuilder {
-        UpdatesHandlerBuilder::new()
+        UpdatesHandlerBuilder::default()
     }
 
     pub async fn synchronize(
@@ -67,7 +67,7 @@ impl SourcesAggregator {
                         tasks.push(provider.synchronize(db_pool, secs_depth))
                     }
                 }
-                if tasks.len() != 0 {
+                if tasks.is_empty() {
                     return Err(Error::SourceKindConflict(format!(
                         "can't find source {:?} in enabled sources list",
                         source
@@ -84,9 +84,8 @@ impl SourcesAggregator {
         debug!("wait {} sources to sync", tasks.len());
         let tasks_results = join_all(tasks).await;
         for task_result in tasks_results {
-            match task_result {
-                Err(err) => Err(err)?,
-                Ok(_) => {}
+            if let Err(err) = task_result {
+                return Err(err);
             }
         }
         Ok(())
@@ -103,7 +102,7 @@ impl SourcesAggregator {
         for task_result in tasks_results {
             match task_result {
                 Ok(res) => results.extend(res),
-                Err(err) => Err(err)?,
+                Err(err) => return Err(err),
             }
         }
         results.extend(models::Source::search(db_pool, query).await?);
@@ -182,19 +181,13 @@ impl SourcesAggregator {
     }
 }
 
+#[derive(Default)]
 pub struct UpdatesHandlerBuilder {
     http_source: Option<Arc<http::HttpSource>>,
     tg_source: Option<Arc<tg::TelegramSource>>,
 }
 
 impl UpdatesHandlerBuilder {
-    pub fn new() -> Self {
-        Self {
-            http_source: None,
-            tg_source: None,
-        }
-    }
-
     pub fn with_http_source(mut self, http_source: Arc<http::HttpSource>) -> Self {
         self.http_source = Some(http_source);
         self
