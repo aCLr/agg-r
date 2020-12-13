@@ -260,8 +260,8 @@ fn make_entities_stack(entities: &[TextEntity]) -> Vec<(usize, String)> {
     stack
 }
 
-pub(super) fn channel_to_new_source(channel: Channel) -> crate::db::models::NewSource {
-    crate::db::models::NewSource {
+pub(super) fn channel_to_new_source(channel: Channel) -> crate::models::NewSource {
+    crate::models::NewSource {
         name: channel.title,
         origin: channel.chat_id.to_string(),
         kind: TELEGRAM.to_string(),

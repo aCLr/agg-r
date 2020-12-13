@@ -1,8 +1,9 @@
 use super::parsers::channel_to_new_source;
 use super::TelegramSource;
 use super::TelegramUpdate;
-use crate::db::{models, Pool};
+use crate::models;
 use crate::result::{Error, Result};
+use crate::storage::Pool;
 use crate::updates::UpdatesHandler;
 use async_trait::async_trait;
 

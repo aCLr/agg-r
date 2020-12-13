@@ -1,6 +1,7 @@
 use super::structs::*;
-use crate::db::{models, Pool};
+use crate::models;
 use crate::result::{Error, Result};
+use crate::storage::Pool;
 use std::path::Path;
 use std::sync::Arc;
 use tg_collector::tg_client::TgClient;

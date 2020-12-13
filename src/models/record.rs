@@ -1,6 +1,6 @@
-use crate::db::Pool;
 use crate::result::Result;
 use crate::schema::records;
+use crate::storage::Pool;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::{Insertable, Queryable};
@@ -38,6 +38,7 @@ impl Record {
         .execute_async(db_pool)
         .await?)
     }
+
     pub async fn get_all(db_pool: &Pool, limit: i64, offset: i32) -> Result<Vec<Self>> {
         Ok(records::table
             .order(records::date.desc())
@@ -79,6 +80,7 @@ impl NewRecord {
         pool: &Pool,
         records_to_insert: Vec<Self>,
     ) -> Result<Vec<Record>> {
+        // TODO: do we need to return updated rows?
         let mut key_to_rec = records_to_insert
             .into_iter()
             .map(|f| ((f.source_record_id.clone(), f.source_id), f))

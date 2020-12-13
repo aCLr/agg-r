@@ -5,8 +5,10 @@ use http_collector::result::Result as HttpResult;
 use std::sync::Arc;
 
 use super::{SourceData, SourceProvider, UpdatesHandler};
-use crate::db::{models, Pool};
+use crate::models;
 use crate::result::{Error, Result};
+use crate::storage::Pool;
+use crate::storage::Storage;
 
 use crate::updates::Source;
 use http_collector::collector::{CacheStub, HttpCollector, ResultsHandler};
@@ -89,21 +91,32 @@ pub struct FeedUpdate {
     pub updates: Vec<Update>,
 }
 
-pub struct HttpSourceBuilder {
+pub struct HttpSourceBuilder<S>
+where
+    S: Storage,
+{
     sleep_secs: u64,
     scrape_source_secs_interval: i32,
+    storage: Option<S>,
 }
 
-impl Default for HttpSourceBuilder {
+impl<S> Default for HttpSourceBuilder<S>
+where
+    S: Storage,
+{
     fn default() -> Self {
         Self::new()
     }
 }
-impl HttpSourceBuilder {
+impl<S> HttpSourceBuilder<S>
+where
+    S: Storage,
+{
     pub fn new() -> Self {
         Self {
             sleep_secs: 60,
             scrape_source_secs_interval: 60,
+            storage: None,
         }
     }
 
@@ -117,30 +130,49 @@ impl HttpSourceBuilder {
         self
     }
 
-    pub fn build(&self) -> HttpSource {
+    pub fn with_storage(mut self, storage: S) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    pub fn build(self) -> HttpSource<S> {
+        if self.storage.is_none() {
+            panic!("storage not specified")
+        }
         HttpSource {
             sleep_secs: self.sleep_secs,
             scrape_source_secs_interval: self.scrape_source_secs_interval,
+            storage: self.storage.unwrap(),
             collector: Arc::new(HttpCollector::new()),
         }
     }
 }
 
-pub struct HttpSource {
+pub struct HttpSource<S>
+where
+    S: Storage,
+{
     sleep_secs: u64,
     scrape_source_secs_interval: i32,
     collector: Arc<HttpCollector<CacheStub>>,
+    storage: S,
 }
 
-impl HttpSource {
-    pub fn builder() -> HttpSourceBuilder {
+impl<S> HttpSource<S>
+where
+    S: Storage,
+{
+    pub fn builder() -> HttpSourceBuilder<S> {
         HttpSourceBuilder::new()
     }
 }
 
 #[async_trait]
-impl UpdatesHandler<FeedUpdate> for HttpSource {
-    async fn create_source(&self, db_pool: &Pool, updates: &FeedUpdate) -> Result<models::Source> {
+impl<S> UpdatesHandler<FeedUpdate> for HttpSource<S>
+where
+    S: Storage,
+{
+    async fn create_source(&self, updates: &FeedUpdate) -> Result<models::Source> {
         let new_source = models::NewSource {
             name: updates.name.clone(),
             origin: updates.link.clone(),
@@ -149,7 +181,7 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
             image: updates.image.clone(),
         };
 
-        Ok(new_source.save(db_pool).await?)
+        Ok(self.storage.save_sources(vec![new_source]).await?)
     }
 
     async fn process_updates(&self, db_pool: &Pool, updates: &FeedUpdate) -> Result<usize> {
@@ -197,7 +229,10 @@ impl UpdatesHandler<FeedUpdate> for HttpSource {
 }
 
 #[async_trait]
-impl SourceProvider for HttpSource {
+impl<S> SourceProvider for HttpSource<S>
+where
+    S: Storage + Send + Sync,
+{
     fn get_source(&self) -> Source {
         Source::Web
     }

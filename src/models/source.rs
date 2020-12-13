@@ -1,6 +1,6 @@
-use crate::db::Pool;
 use crate::result::Result;
 use crate::schema::sources;
+use crate::storage::Pool;
 use chrono::NaiveDateTime;
 use diesel::dsl::IntervalDsl;
 use diesel::expression::functions::date_and_time::now;

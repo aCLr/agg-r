@@ -1,8 +1,9 @@
 use super::handler::Handler;
 use super::parsers;
 use super::TelegramSource;
-use crate::db::{models, Pool};
+use crate::models;
 use crate::result::{Error, Result};
+use crate::storage::Pool;
 use crate::updates::{Source, SourceData, SourceProvider};
 use async_trait::async_trait;
 use chrono::NaiveDateTime;

@@ -1,17 +1,28 @@
-use crate::db::{models, Pool};
+// TODO: no needs for aggregator, handler can be used directly
+use crate::models;
 use crate::result::Result;
+use crate::storage::Pool;
+use crate::storage::Storage;
 use crate::updates::Source;
 use crate::{config, updates};
 use std::sync::Arc;
 
-pub struct Aggregator {
-    handler: updates::SourcesAggregator,
+pub struct Aggregator<S: Storage> {
+    handler: updates::SourcesAggregator<S>,
     db_pool: Pool,
+    storage: S,
 }
 
-impl Aggregator {
-    pub fn new(handler: updates::SourcesAggregator, db_pool: Pool) -> Self {
-        Self { handler, db_pool }
+impl<S> Aggregator<S>
+where
+    S: Storage,
+{
+    pub fn new(handler: updates::SourcesAggregator<S>, db_pool: Pool, storage: S) -> Self {
+        Self {
+            handler,
+            db_pool,
+            storage,
+        }
     }
 
     pub async fn run(&self) {
@@ -29,17 +40,28 @@ impl Aggregator {
     }
 }
 
-pub struct AggregatorBuilder<'a> {
+pub struct AggregatorBuilder<'a, S>
+where
+    S: Storage,
+{
     config: &'a config::AggregatorConfig,
     db_pool: Pool,
+    storage: S,
 }
 
-impl<'a> AggregatorBuilder<'a> {
-    pub fn new(config: &'a config::AggregatorConfig, db_pool: Pool) -> Self {
-        Self { config, db_pool }
+impl<'a, S: Storage> AggregatorBuilder<'a, S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    pub fn new(config: &'a config::AggregatorConfig, db_pool: Pool, storage: S) -> Self {
+        Self {
+            config,
+            db_pool,
+            storage,
+        }
     }
 
-    pub fn build(&self) -> Aggregator {
+    pub fn build(&self) -> Aggregator<S> {
         debug!("config for building: {:?}", self.config);
         let mut updates_builder = updates::SourcesAggregator::builder();
 
@@ -66,7 +88,10 @@ impl<'a> AggregatorBuilder<'a> {
             let tg_source = Arc::new(tg_source);
             updates_builder = updates_builder.with_tg_source(tg_source);
         }
-
-        Aggregator::new(updates_builder.build(), self.db_pool.clone())
+        Aggregator::new(
+            updates_builder.build(),
+            self.db_pool.clone(),
+            self.storage.clone(),
+        )
     }
 }

@@ -1,5 +1,7 @@
-use crate::db::{models, Pool};
+use crate::models;
 use crate::result::{Error, Result};
+use crate::storage::Pool;
+use crate::storage::Storage;
 use async_trait::async_trait;
 use futures::future::join_all;
 use std::sync::Arc;
@@ -23,7 +25,7 @@ pub enum Source {
 
 #[async_trait]
 pub trait UpdatesHandler<T> {
-    async fn create_source(&self, db_pool: &Pool, updates: &T) -> Result<models::Source>;
+    async fn create_source(&self, updates: &T) -> Result<models::Source>;
     async fn process_updates(&self, db_pool: &Pool, updates: &T) -> Result<usize>;
 }
 
@@ -39,15 +41,22 @@ pub trait SourceProvider {
     async fn synchronize(&self, db_pool: &Pool, secs_depth: i32) -> Result<()>;
 }
 
-pub struct SourcesAggregator {
-    http_source: Option<Arc<http::HttpSource>>,
+pub struct SourcesAggregator<S>
+where
+    S: Storage,
+{
+    http_source: Option<Arc<http::HttpSource<S>>>,
     tg_source: Option<Arc<tg::TelegramSource>>,
     updates_sender: Arc<Mutex<Sender<Result<SourceData>>>>,
     updates_receiver: Mutex<Receiver<Result<SourceData>>>,
+    storage: S,
 }
 
-impl SourcesAggregator {
-    pub fn builder() -> UpdatesHandlerBuilder {
+impl<S> SourcesAggregator<S>
+where
+    S: Storage + Send + Sync + 'static,
+{
+    pub fn builder() -> UpdatesHandlerBuilder<S> {
         UpdatesHandlerBuilder::default()
     }
 
@@ -181,14 +190,33 @@ impl SourcesAggregator {
     }
 }
 
-#[derive(Default)]
-pub struct UpdatesHandlerBuilder {
-    http_source: Option<Arc<http::HttpSource>>,
+pub struct UpdatesHandlerBuilder<S>
+where
+    S: Storage,
+{
+    http_source: Option<Arc<http::HttpSource<S>>>,
     tg_source: Option<Arc<tg::TelegramSource>>,
+    storage: Option<S>,
 }
 
-impl UpdatesHandlerBuilder {
-    pub fn with_http_source(mut self, http_source: Arc<http::HttpSource>) -> Self {
+impl<S> Default for UpdatesHandlerBuilder<S>
+where
+    S: Storage,
+{
+    fn default() -> Self {
+        Self {
+            http_source: None,
+            tg_source: None,
+            storage: None,
+        }
+    }
+}
+
+impl<S> UpdatesHandlerBuilder<S>
+where
+    S: Storage,
+{
+    pub fn with_http_source(mut self, http_source: Arc<http::HttpSource<S>>) -> Self {
         self.http_source = Some(http_source);
         self
     }
@@ -198,13 +226,17 @@ impl UpdatesHandlerBuilder {
         self
     }
 
-    pub fn build(self) -> SourcesAggregator {
+    pub fn build(self) -> SourcesAggregator<S> {
+        if self.storage.is_none() {
+            panic!("storage not passed");
+        }
         let (updates_sender, updates_receiver) = mpsc::channel::<Result<SourceData>>(2000);
         let updates_sender = Arc::new(Mutex::new(updates_sender));
         let updates_receiver = Mutex::new(updates_receiver);
         SourcesAggregator {
             http_source: self.http_source,
             tg_source: self.tg_source,
+            storage: self.storage.unwrap(),
             updates_sender,
             updates_receiver,
         }

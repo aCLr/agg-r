@@ -12,8 +12,9 @@ extern crate serde;
 
 pub mod aggregator;
 pub mod config;
-pub mod db;
+pub mod models;
 pub mod result;
 mod schema;
+pub mod storage;
 mod tools;
 mod updates;

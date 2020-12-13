@@ -1,6 +1,6 @@
-use crate::db::Pool;
 use crate::result::{Error, Result};
 use crate::schema::files;
+use crate::storage::Pool;
 use diesel::prelude::*;
 use diesel::{Insertable, Queryable};
 use serde::{Deserialize, Serialize};
