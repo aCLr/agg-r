@@ -43,25 +43,25 @@ impl<'a> AggregatorBuilder<'a> {
         debug!("config for building: {:?}", self.config);
         let mut updates_builder = updates::SourcesAggregator::builder();
 
-        if *self.config.http().enabled() {
+        if self.config.http().enabled() {
             let http_source = updates::http::HttpSource::builder()
-                .with_sleep_secs(*self.config.http().sleep_secs())
+                .with_sleep_secs(self.config.http().sleep_secs())
                 .build();
             let http_source = Arc::new(http_source);
             updates_builder = updates_builder.with_http_source(http_source);
         }
 
-        if *self.config.telegram().enabled() {
+        if self.config.telegram().enabled() {
             let tg_source = updates::tg::TelegramSource::builder(
-                *self.config.telegram().api_id(),
+                self.config.telegram().api_id(),
                 self.config.telegram().api_hash(),
                 self.config.telegram().phone(),
-                *self.config.telegram().max_download_queue_size(),
+                self.config.telegram().max_download_queue_size(),
                 self.config.telegram().files_directory(),
-                *self.config.telegram().log_download_state_secs_interval(),
+                self.config.telegram().log_download_state_secs_interval(),
             )
-            .with_database_directory(self.config.telegram().database_directory().as_str())
-            .with_log_verbosity_level(*self.config.telegram().log_verbosity_level())
+            .with_database_directory(self.config.telegram().database_directory())
+            .with_log_verbosity_level(self.config.telegram().log_verbosity_level())
             .build();
             let tg_source = Arc::new(tg_source);
             updates_builder = updates_builder.with_tg_source(tg_source);

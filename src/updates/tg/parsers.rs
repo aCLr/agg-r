@@ -269,13 +269,14 @@ pub(super) fn channel_to_new_source(channel: Channel) -> crate::db::models::NewS
         external_link: channel.username,
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use crate::updates::tg::parse_message_text;
-    use tg_collector::{FormattedText, MessageText};
+    use crate::updates::tg::parsers::parse_formatted_text;
+    use tg_collector::FormattedText;
 
-    #[tokio::test]
-    async fn test_parse_message_text() {
+    #[test]
+    fn test_parse_formatted_text() {
         let tests = vec![
             (
                 r#"{"@type":"formattedText","@extra":"","text":"Изображение из пятидесяти линий.\nНаткнулся на скрипт, который генерирует такие изображения вот тут.\nЛожите рядом со скриптом png изображение 750х750 в градациях серого, в исходнике меняете имя файла на ваше и запускаете исходник с помощью processing. Сгенерированное изображение будет лежать в том же каталоге.","entities":[{"@type":"textEntity","@extra":"","offset":91,"length":7,"type":{"@type":"textEntityTypeTextUrl","@extra":"","url":"https://gist.github.com/u-ndefine/8e4bc21be4275f87fefe7b2a68487161"}},{"@type":"textEntity","@extra":"","offset":239,"length":10,"type":{"@type":"textEntityTypeTextUrl","@extra":"","url":"https://processing.org/download/"}}]}"#,
@@ -294,8 +295,7 @@ https://t.me/joinchat/IqlQqUGyZpI1-0Zu8ChAmA"#,
         ];
         for (json_data, expected) in tests {
             let formatted_text = FormattedText::from_json(json_data).unwrap();
-            let message_text = MessageText::builder().text(formatted_text).build();
-            let t = parse_message_text(&message_text).await;
+            let t = parse_formatted_text(&formatted_text);
             assert_eq!(t, expected);
         }
     }
