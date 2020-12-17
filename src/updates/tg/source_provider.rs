@@ -3,7 +3,7 @@ use super::parsers;
 use super::TelegramSource;
 use crate::models;
 use crate::result::{Error, Result};
-use crate::storage::Pool;
+use crate::storage::Storage;
 use crate::updates::{Source, SourceData, SourceProvider};
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
@@ -15,21 +15,20 @@ use tokio::stream::StreamExt;
 use tokio::sync::{mpsc, Mutex};
 
 #[async_trait]
-impl SourceProvider for TelegramSource {
+impl<S> SourceProvider for TelegramSource<S>
+where
+    S: Storage + Send + Sync,
+{
     fn get_source(&self) -> Source {
         Source::Telegram
     }
 
-    async fn run(
-        &self,
-        _db_pool: &Pool,
-        updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>,
-    ) {
+    async fn run(&self, updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>) {
         let mut tg_handler = Handler::new(updates_sender, self.collector.clone());
         tg_handler.run().await;
     }
 
-    async fn search_source(&self, db_pool: &Pool, query: &str) -> Result<Vec<models::Source>> {
+    async fn search_source(&self, query: &str) -> Result<Vec<models::Source>> {
         let channels = self
             .collector
             .read()
@@ -39,15 +38,15 @@ impl SourceProvider for TelegramSource {
         let mut sources = vec![];
         for ch in channels {
             let source = parsers::channel_to_new_source(ch);
-            match source.save(db_pool).await {
-                Ok(s) => sources.push(s),
+            match self.storage.save_sources(vec![source]).await {
+                Ok(s) => sources.extend(s),
                 Err(e) => error!("{:?}", e),
             }
         }
         Ok(sources)
     }
 
-    async fn synchronize(&self, db_pool: &Pool, secs_depth: i32) -> Result<()> {
+    async fn synchronize(&self, secs_depth: i32) -> Result<()> {
         let channels = self.collector.read().await.get_all_channels(1000).await?;
         let until = SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
             - Duration::new(secs_depth as u64, 0);
@@ -56,7 +55,12 @@ impl SourceProvider for TelegramSource {
             debug!("going to sync {}", channel.title);
             let chat_id = channel.chat_id;
             let source = parsers::channel_to_new_source(channel);
-            let source = source.save(db_pool).await?;
+            let source = self
+                .storage
+                .save_sources(vec![source])
+                .await?
+                .pop()
+                .unwrap();
             let mut messages_stream = Box::pin(TgClient::get_chat_history_stream(
                 self.collector.clone(),
                 chat_id,
@@ -97,14 +101,14 @@ impl SourceProvider for TelegramSource {
                 }
             }
             debug!("get {} records for {}", parsed_records.len(), source.name);
-            let records = models::NewRecord::update_or_create(db_pool, parsed_records).await?;
+            let records = self.storage.save_records(parsed_records).await?;
             for rec in &records {
                 let rec_files =
                     files_by_rec.get(&(rec.source_record_id.parse().unwrap(), rec.source_id));
                 match rec_files {
                     None => {}
                     Some(f) => {
-                        if let Err(e) = self.handle_new_files(db_pool, f, rec.id).await {
+                        if let Err(e) = self.handle_new_files(f, rec.id).await {
                             error!("{:?}", e)
                         };
                     }

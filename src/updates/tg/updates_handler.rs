@@ -3,17 +3,16 @@ use super::TelegramSource;
 use super::TelegramUpdate;
 use crate::models;
 use crate::result::{Error, Result};
-use crate::storage::Pool;
+use crate::storage::Storage;
 use crate::updates::UpdatesHandler;
 use async_trait::async_trait;
 
 #[async_trait]
-impl UpdatesHandler<TelegramUpdate> for TelegramSource {
-    async fn create_source(
-        &self,
-        db_pool: &Pool,
-        updates: &TelegramUpdate,
-    ) -> Result<models::Source> {
+impl<S> UpdatesHandler<TelegramUpdate> for TelegramSource<S>
+where
+    S: Storage + Send + Sync,
+{
+    async fn create_source(&self, updates: &TelegramUpdate) -> Result<models::Source> {
         match updates {
             TelegramUpdate::FileDownloadFinished(_) => Err(Error::UpdateNotSupported(
                 "FileDownloadFinished".to_string(),
@@ -34,28 +33,30 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                     return Err(Error::SourceNotFound);
                 }
                 let s = channel_to_new_source(chann.unwrap());
-                Ok(s.save(db_pool).await?)
+                Ok(self.storage.save_sources(vec![s]).await?.pop().unwrap())
             }
         }
     }
 
-    async fn process_updates(&self, db_pool: &Pool, updates: &TelegramUpdate) -> Result<usize> {
+    async fn process_updates(&self, updates: &TelegramUpdate) -> Result<usize> {
         match updates {
             TelegramUpdate::FileDownloadFinished(file) => {
-                self.handle_file_downloaded(db_pool, file).await?;
+                self.handle_file_downloaded(file).await?;
                 Ok(1)
             }
             TelegramUpdate::Message(message) => {
-                let sources =
-                    models::Source::search(db_pool, message.chat_id.to_string().as_str()).await?;
+                let mut sources = self
+                    .storage
+                    .search_source(message.chat_id.to_string().as_str())
+                    .await?;
                 let source = match sources.len() {
-                    0 => self.create_source(db_pool, updates).await?,
-                    _ => sources.first().unwrap().clone(),
+                    0 => self.create_source(updates).await?,
+                    _ => sources.pop().unwrap(),
                 };
                 let message_id = message.message_id;
-                let created = models::NewRecord::update_or_create(
-                    db_pool,
-                    vec![models::NewRecord {
+                let created = self
+                    .storage
+                    .save_records(vec![models::NewRecord {
                         title: None,
                         image: None,
                         date: message
@@ -64,10 +65,9 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                         source_record_id: message_id.to_string(),
                         source_id: source.id,
                         content: message.content.clone().unwrap_or_default(),
-                    }],
-                )
-                .await?
-                .pop();
+                    }])
+                    .await?
+                    .pop();
                 match created {
                     None => {
                         if message.files.is_some() {
@@ -81,9 +81,8 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                     Some(rec) if message.files.is_some() => {
                         let files = message.files.as_ref().unwrap();
                         let (handle_file, handle_record) = tokio::join!(
-                            self.handle_new_files(db_pool, files, rec.id),
+                            self.handle_new_files(files, rec.id),
                             self.handle_record_inserted(
-                                db_pool,
                                 message.chat_id,
                                 message_id,
                                 vec![(rec.source_record_id, rec.source_id)],
@@ -99,7 +98,6 @@ impl UpdatesHandler<TelegramUpdate> for TelegramSource {
                     }
                     Some(rec) if message.files.is_none() => Ok(self
                         .handle_record_inserted(
-                            db_pool,
                             message.chat_id,
                             message_id,
                             vec![(rec.source_record_id, rec.source_id)],

@@ -1,6 +1,5 @@
 use crate::models;
 use crate::result::{Error, Result};
-use crate::storage::Pool;
 use crate::storage::Storage;
 use async_trait::async_trait;
 use futures::future::join_all;
@@ -26,27 +25,23 @@ pub enum Source {
 #[async_trait]
 pub trait UpdatesHandler<T> {
     async fn create_source(&self, updates: &T) -> Result<models::Source>;
-    async fn process_updates(&self, db_pool: &Pool, updates: &T) -> Result<usize>;
+    async fn process_updates(&self, updates: &T) -> Result<usize>;
 }
 
 #[async_trait]
 pub trait SourceProvider {
     fn get_source(&self) -> Source;
-    async fn run(
-        &self,
-        db_pool: &Pool,
-        updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>,
-    );
-    async fn search_source(&self, db_pool: &Pool, query: &str) -> Result<Vec<models::Source>>;
-    async fn synchronize(&self, db_pool: &Pool, secs_depth: i32) -> Result<()>;
+    async fn run(&self, updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>);
+    async fn search_source(&self, query: &str) -> Result<Vec<models::Source>>;
+    async fn synchronize(&self, secs_depth: i32) -> Result<()>;
 }
 
 pub struct SourcesAggregator<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     http_source: Option<Arc<http::HttpSource<S>>>,
-    tg_source: Option<Arc<tg::TelegramSource>>,
+    tg_source: Option<Arc<tg::TelegramSource<S>>>,
     updates_sender: Arc<Mutex<Sender<Result<SourceData>>>>,
     updates_receiver: Mutex<Receiver<Result<SourceData>>>,
     storage: S,
@@ -54,18 +49,13 @@ where
 
 impl<S> SourcesAggregator<S>
 where
-    S: Storage + Send + Sync + 'static,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     pub fn builder() -> UpdatesHandlerBuilder<S> {
         UpdatesHandlerBuilder::default()
     }
 
-    pub async fn synchronize(
-        &self,
-        db_pool: &Pool,
-        secs_depth: i32,
-        source: Option<Source>,
-    ) -> Result<()> {
+    pub async fn synchronize(&self, secs_depth: i32, source: Option<Source>) -> Result<()> {
         let source_providers = self.get_enabled_sources();
         let mut tasks = vec![];
         match source {
@@ -73,7 +63,7 @@ where
                 for provider in &source_providers {
                     if provider.get_source() == source {
                         debug!("going to sync {:?}", provider.get_source());
-                        tasks.push(provider.synchronize(db_pool, secs_depth))
+                        tasks.push(provider.synchronize(secs_depth))
                     }
                 }
                 if tasks.is_empty() {
@@ -86,7 +76,7 @@ where
             None => {
                 for provider in &source_providers {
                     debug!("going to sync {:?}", provider.get_source());
-                    tasks.push(provider.synchronize(db_pool, secs_depth))
+                    tasks.push(provider.synchronize(secs_depth))
                 }
             }
         }
@@ -100,11 +90,11 @@ where
         Ok(())
     }
 
-    pub async fn search_source(&self, db_pool: &Pool, query: &str) -> Result<Vec<models::Source>> {
+    pub async fn search_source(&self, query: &str) -> Result<Vec<models::Source>> {
         let source_providers = self.get_enabled_sources();
         let mut tasks = vec![];
         for provider in &source_providers {
-            tasks.push(provider.search_source(db_pool, query))
+            tasks.push(provider.search_source(query))
         }
         let mut results = vec![];
         let tasks_results = join_all(tasks).await;
@@ -114,7 +104,7 @@ where
                 Err(err) => return Err(err),
             }
         }
-        results.extend(models::Source::search(db_pool, query).await?);
+        results.extend(self.storage.search_source(query).await?);
         // TODO: check: duplicates appears
         results.dedup_by_key(|s| s.id);
         Ok(results)
@@ -135,7 +125,7 @@ where
         enabled
     }
 
-    pub async fn run(&self, db_pool: &Pool) {
+    pub async fn run(&self) {
         macro_rules! run_source {
             ($source:expr) => {
                 match &$source {
@@ -143,17 +133,17 @@ where
                     Some(source) => {
                         let s = source.clone();
                         let sender = self.updates_sender.clone();
-                        s.run(db_pool, sender).await;
+                        s.run(sender).await;
                     }
                 }
             };
         }
         run_source!(self.tg_source);
         run_source!(self.http_source);
-        self.process_updates(db_pool).await;
+        self.process_updates().await;
     }
 
-    async fn process_updates(&self, db_pool: &Pool) {
+    async fn process_updates(&self) {
         loop {
             while let Some(updates) = self.updates_receiver.lock().await.recv().await {
                 debug!("new updates: {:?}", updates);
@@ -164,14 +154,14 @@ where
                                 debug!("http source disabled");
                                 Ok(0)
                             }
-                            Some(source) => source.process_updates(db_pool, feed_data).await,
+                            Some(source) => source.process_updates(feed_data).await,
                         },
                         SourceData::Telegram(telegram_update) => match &self.tg_source {
                             None => {
                                 debug!("http source disabled");
                                 Ok(0)
                             }
-                            Some(source) => source.process_updates(db_pool, telegram_update).await,
+                            Some(source) => source.process_updates(telegram_update).await,
                         },
                     },
                     Err(err) => Err(Error::DbError(err.to_string())),
@@ -192,16 +182,16 @@ where
 
 pub struct UpdatesHandlerBuilder<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     http_source: Option<Arc<http::HttpSource<S>>>,
-    tg_source: Option<Arc<tg::TelegramSource>>,
+    tg_source: Option<Arc<tg::TelegramSource<S>>>,
     storage: Option<S>,
 }
 
 impl<S> Default for UpdatesHandlerBuilder<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     fn default() -> Self {
         Self {
@@ -214,14 +204,18 @@ where
 
 impl<S> UpdatesHandlerBuilder<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
+    pub fn with_storage(mut self, storage: S) -> Self {
+        self.storage = Some(storage);
+        self
+    }
     pub fn with_http_source(mut self, http_source: Arc<http::HttpSource<S>>) -> Self {
         self.http_source = Some(http_source);
         self
     }
 
-    pub fn with_tg_source(mut self, tg_source: Arc<tg::TelegramSource>) -> Self {
+    pub fn with_tg_source(mut self, tg_source: Arc<tg::TelegramSource<S>>) -> Self {
         self.tg_source = Some(tg_source);
         self
     }

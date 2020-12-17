@@ -1,69 +1,56 @@
 // TODO: no needs for aggregator, handler can be used directly
 use crate::models;
 use crate::result::Result;
-use crate::storage::Pool;
 use crate::storage::Storage;
 use crate::updates::Source;
 use crate::{config, updates};
 use std::sync::Arc;
 
-pub struct Aggregator<S: Storage> {
+pub struct Aggregator<S: Storage + Send + Sync + Clone + 'static> {
     handler: updates::SourcesAggregator<S>,
-    db_pool: Pool,
-    storage: S,
 }
 
 impl<S> Aggregator<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
-    pub fn new(handler: updates::SourcesAggregator<S>, db_pool: Pool, storage: S) -> Self {
-        Self {
-            handler,
-            db_pool,
-            storage,
-        }
+    pub fn new(handler: updates::SourcesAggregator<S>) -> Self {
+        Self { handler }
     }
 
     pub async fn run(&self) {
-        self.handler.run(&self.db_pool).await
+        self.handler.run().await
     }
 
     pub async fn search_source(&self, query: &str) -> Result<Vec<models::Source>> {
-        self.handler.search_source(&self.db_pool, query).await
+        self.handler.search_source(query).await
     }
 
     pub async fn synchronize(&self, secs_depth: i32, source: Option<Source>) -> Result<()> {
-        self.handler
-            .synchronize(&self.db_pool, secs_depth, source)
-            .await
+        self.handler.synchronize(secs_depth, source).await
     }
 }
 
 pub struct AggregatorBuilder<'a, S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     config: &'a config::AggregatorConfig,
-    db_pool: Pool,
     storage: S,
 }
 
-impl<'a, S: Storage> AggregatorBuilder<'a, S>
+impl<'a, S> AggregatorBuilder<'a, S>
 where
-    S: Storage + Clone + Send + Sync + 'static,
+    S: Storage + Clone + Send + Sync + Clone + 'static,
 {
-    pub fn new(config: &'a config::AggregatorConfig, db_pool: Pool, storage: S) -> Self {
-        Self {
-            config,
-            db_pool,
-            storage,
-        }
+    pub fn new(config: &'a config::AggregatorConfig, storage: S) -> Self {
+        Self { config, storage }
     }
 
     pub fn build(&self) -> Aggregator<S> {
         debug!("config for building: {:?}", self.config);
-        let mut updates_builder = updates::SourcesAggregator::builder();
+        let mut updates_builder =
+            updates::SourcesAggregator::builder().with_storage(self.storage.clone());
 
         if self.config.http().enabled() {
             let http_source = updates::http::HttpSource::builder()
@@ -88,10 +75,6 @@ where
             let tg_source = Arc::new(tg_source);
             updates_builder = updates_builder.with_tg_source(tg_source);
         }
-        Aggregator::new(
-            updates_builder.build(),
-            self.db_pool.clone(),
-            self.storage.clone(),
-        )
+        Aggregator::new(updates_builder.build())
     }
 }

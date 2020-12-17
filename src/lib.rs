@@ -2,8 +2,12 @@
 extern crate log;
 #[macro_use]
 extern crate derive_builder;
+
+#[cfg(feature = "pg-storage")]
 #[macro_use]
 extern crate diesel;
+
+#[cfg(feature = "pg-storage")]
 #[macro_use]
 extern crate diesel_migrations;
 
@@ -14,7 +18,6 @@ pub mod aggregator;
 pub mod config;
 pub mod models;
 pub mod result;
-mod schema;
 pub mod storage;
 mod tools;
 mod updates;

@@ -1,7 +1,7 @@
 use super::structs::*;
 use crate::models;
 use crate::result::{Error, Result};
-use crate::storage::Pool;
+use crate::storage::Storage;
 use std::path::Path;
 use std::sync::Arc;
 use tg_collector::tg_client::TgClient;
@@ -9,7 +9,10 @@ use tokio::sync::RwLock;
 
 pub(super) const TELEGRAM: &str = "TELEGRAM";
 
-pub struct TelegramSourceBuilder {
+pub struct TelegramSourceBuilder<S>
+where
+    S: Storage + Send + Sync,
+{
     api_id: i64,
     api_hash: String,
     phone_number: String,
@@ -18,9 +21,13 @@ pub struct TelegramSourceBuilder {
     max_download_queue_size: usize,
     log_download_state_secs_interval: u64,
     files_directory: String,
+    storage: Option<S>,
 }
 
-impl TelegramSourceBuilder {
+impl<S> TelegramSourceBuilder<S>
+where
+    S: Storage + Send + Sync,
+{
     pub fn new(
         api_id: i64,
         api_hash: &str,
@@ -38,7 +45,13 @@ impl TelegramSourceBuilder {
             api_hash: api_hash.to_string(),
             log_verbosity_level: 0,
             database_directory: "tdlib".to_string(),
+            storage: None,
         }
+    }
+
+    pub fn with_storage(mut self, storage: S) -> Self {
+        self.storage = Some(storage);
+        self
     }
 
     pub fn with_log_verbosity_level(mut self, level: i32) -> Self {
@@ -51,7 +64,10 @@ impl TelegramSourceBuilder {
         self
     }
 
-    pub fn build(&self) -> TelegramSource {
+    pub fn build(self) -> TelegramSource<S> {
+        if self.storage.is_none() {
+            panic!("storage not set")
+        }
         let tg_conf = tg_collector::config::Config {
             log_verbosity_level: self.log_verbosity_level,
             database_directory: self.database_directory.clone(),
@@ -66,15 +82,23 @@ impl TelegramSourceBuilder {
                 &tg_conf,
             ))),
             files_directory: self.files_directory.clone(),
+            storage: self.storage.unwrap(),
         }
     }
 }
-pub struct TelegramSource {
+pub struct TelegramSource<S>
+where
+    S: Storage + Send + Sync,
+{
     pub(super) collector: Arc<RwLock<TgClient>>,
     pub(super) files_directory: String,
+    pub(super) storage: S,
 }
 
-impl TelegramSource {
+impl<S> TelegramSource<S>
+where
+    S: Storage + Send + Sync,
+{
     pub fn builder(
         api_id: i64,
         api_hash: &str,
@@ -82,7 +106,7 @@ impl TelegramSource {
         max_download_queue_size: usize,
         files_directory: &str,
         log_download_state_secs_interval: u64,
-    ) -> TelegramSourceBuilder {
+    ) -> TelegramSourceBuilder<S> {
         TelegramSourceBuilder::new(
             api_id,
             api_hash,
@@ -103,7 +127,6 @@ impl TelegramSource {
 
     pub(super) async fn handle_new_files(
         &self,
-        db_pool: &Pool,
         files: &[TelegramFileWithMeta],
         record_id: i32,
     ) -> Result<()> {
@@ -140,7 +163,7 @@ impl TelegramSource {
                 }
             })
             .collect();
-        models::NewFile::update_or_create(db_pool, db_files).await?;
+        self.storage.save_files(db_files).await?;
         for f in files {
             match self
                 .collector
@@ -156,12 +179,11 @@ impl TelegramSource {
         Ok(())
     }
 
-    pub(super) async fn handle_file_downloaded(
-        &self,
-        db_pool: &Pool,
-        file: &TelegramFile,
-    ) -> Result<()> {
-        let db_file = models::File::get_file_by_remote_id(db_pool, file.remote_id.clone()).await?;
+    pub(super) async fn handle_file_downloaded(&self, file: &TelegramFile) -> Result<()> {
+        let db_file = self
+            .storage
+            .get_file_by_remote_id(file.remote_id.clone())
+            .await?;
         match db_file {
             None => warn!("unknown telegram file: {:?}", file),
             Some(mut db_file) => {
@@ -176,7 +198,7 @@ impl TelegramSource {
                     }
                     Some(_) => {}
                 }
-                db_file.save(db_pool).await?;
+                self.storage.save_file(db_file).await?;
             }
         }
         Ok(())
@@ -184,7 +206,6 @@ impl TelegramSource {
 
     pub(super) async fn handle_record_inserted(
         &self,
-        db_pool: &Pool,
         chat_id: i64,
         message_id: i64,
         created: Vec<(String, i32)>,
@@ -199,7 +220,9 @@ impl TelegramSource {
                     .get_message_link(chat_id, message_id)
                     .await?;
                 let (sri, si) = created.first().unwrap();
-                models::Record::set_external_ink(db_pool, sri.clone(), *si, message_link).await?;
+                self.storage
+                    .set_record_external_link(sri.clone(), *si, message_link)
+                    .await?;
                 Ok(1)
             }
             x => {

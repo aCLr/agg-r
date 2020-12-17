@@ -7,7 +7,6 @@ use std::sync::Arc;
 use super::{SourceData, SourceProvider, UpdatesHandler};
 use crate::models;
 use crate::result::{Error, Result};
-use crate::storage::Pool;
 use crate::storage::Storage;
 
 use crate::updates::Source;
@@ -93,7 +92,7 @@ pub struct FeedUpdate {
 
 pub struct HttpSourceBuilder<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     sleep_secs: u64,
     scrape_source_secs_interval: i32,
@@ -102,7 +101,7 @@ where
 
 impl<S> Default for HttpSourceBuilder<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     fn default() -> Self {
         Self::new()
@@ -110,7 +109,7 @@ where
 }
 impl<S> HttpSourceBuilder<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     pub fn new() -> Self {
         Self {
@@ -150,7 +149,7 @@ where
 
 pub struct HttpSource<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     sleep_secs: u64,
     scrape_source_secs_interval: i32,
@@ -160,7 +159,7 @@ where
 
 impl<S> HttpSource<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     pub fn builder() -> HttpSourceBuilder<S> {
         HttpSourceBuilder::new()
@@ -170,7 +169,7 @@ where
 #[async_trait]
 impl<S> UpdatesHandler<FeedUpdate> for HttpSource<S>
 where
-    S: Storage,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     async fn create_source(&self, updates: &FeedUpdate) -> Result<models::Source> {
         let new_source = models::NewSource {
@@ -181,31 +180,37 @@ where
             image: updates.image.clone(),
         };
 
-        Ok(self.storage.save_sources(vec![new_source]).await?)
+        Ok(self
+            .storage
+            .save_sources(vec![new_source])
+            .await?
+            .pop()
+            .unwrap())
     }
 
-    async fn process_updates(&self, db_pool: &Pool, updates: &FeedUpdate) -> Result<usize> {
-        let sources = models::Source::search(db_pool, updates.link.as_str()).await?;
+    async fn process_updates(&self, updates: &FeedUpdate) -> Result<usize> {
+        let mut sources = self.storage.search_source(updates.link.as_str()).await?;
         let source = match sources.len() {
-            0 => self.create_source(db_pool, updates).await?,
-            _ => sources.first().unwrap().clone(),
+            0 => self.create_source(updates).await?,
+            _ => sources.pop().unwrap(),
         };
-        let affected = models::NewRecord::update_or_create(
-            db_pool,
-            updates
-                .updates
-                .iter()
-                .map(|u| models::NewRecord {
-                    date: Some(u.pub_date),
-                    title: u.title.clone(),
-                    source_record_id: u.guid.clone(),
-                    source_id: source.id,
-                    content: u.content.clone(),
-                    image: u.image_link.clone(),
-                })
-                .collect::<Vec<models::NewRecord>>(),
-        )
-        .await?;
+        let affected = self
+            .storage
+            .save_records(
+                updates
+                    .updates
+                    .iter()
+                    .map(|u| models::NewRecord {
+                        date: Some(u.pub_date),
+                        title: u.title.clone(),
+                        source_record_id: u.guid.clone(),
+                        source_id: source.id,
+                        content: u.content.clone(),
+                        image: u.image_link.clone(),
+                    })
+                    .collect::<Vec<models::NewRecord>>(),
+            )
+            .await?;
         if affected.is_empty() {
             let mut tasks = vec![];
             updates.updates.iter().for_each(|u| {
@@ -213,8 +218,7 @@ where
                     .iter()
                     .any(|r| r.source_record_id == u.guid && r.source_id == source.id)
                 {
-                    tasks.push(models::Record::set_external_ink(
-                        db_pool,
+                    tasks.push(self.storage.set_record_external_link(
                         u.guid.clone(),
                         source.id,
                         u.guid.clone(),
@@ -223,7 +227,7 @@ where
             });
             futures::future::join_all(tasks).await;
         }
-        source.set_scraped_now(db_pool).await?;
+        self.storage.set_source_scraped_now(source).await?;
         Ok(affected.len())
     }
 }
@@ -231,41 +235,31 @@ where
 #[async_trait]
 impl<S> SourceProvider for HttpSource<S>
 where
-    S: Storage + Send + Sync,
+    S: Storage + Send + Sync + Clone + 'static,
 {
     fn get_source(&self) -> Source {
         Source::Web
     }
 
-    async fn synchronize(&self, _db_pool: &Pool, _secs_depth: i32) -> Result<()> {
+    async fn synchronize(&self, _secs_depth: i32) -> Result<()> {
         // nothing to sync with http source
         Ok(())
     }
 
-    async fn run(
-        &self,
-        db_pool: &Pool,
-        updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>,
-    ) {
+    async fn run(&self, updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>) {
         let (sources_sender, sources_receiver) = mpsc::channel(2000);
         let sleep_secs = self.sleep_secs;
         let scrape_source_secs_interval = self.scrape_source_secs_interval;
-        let pool = db_pool.clone();
+        let st = self.storage.clone();
         tokio::spawn(async move {
-            sources_gen(
-                &pool,
-                scrape_source_secs_interval,
-                sleep_secs,
-                sources_sender,
-            )
-            .await
+            sources_gen(st, scrape_source_secs_interval, sleep_secs, sources_sender).await
         });
         let http_handler = Handler::new(updates_sender);
         let http_runner = self.collector.clone();
         tokio::spawn(async move { http_runner.run(sources_receiver, &http_handler).await });
     }
 
-    async fn search_source(&self, db_pool: &Pool, query: &str) -> Result<Vec<models::Source>> {
+    async fn search_source(&self, query: &str) -> Result<Vec<models::Source>> {
         let mut query = query.to_string();
         if !query.starts_with("http://") && !query.starts_with("https://") {
             query = format!("https://{}", query);
@@ -275,39 +269,40 @@ where
             Err(CollectorError::RequestError) => vec![],
             Err(e) => return Err(e.into()),
         };
-        let new_sources = models::NewSource::save_bulk(
-            db_pool,
-            feeds
-                .iter()
-                .map(|f| models::NewSource {
-                    name: f.name.clone(),
-                    origin: f.link.clone(),
-                    external_link: f.link.clone(),
-                    kind: WEB.to_string(),
-                    image: f.image.clone(),
-                })
-                .collect(),
-        )
-        .await?;
+        let new_sources = self
+            .storage
+            .save_sources(
+                feeds
+                    .iter()
+                    .map(|f| models::NewSource {
+                        name: f.name.clone(),
+                        origin: f.link.clone(),
+                        external_link: f.link.clone(),
+                        kind: WEB.to_string(),
+                        image: f.image.clone(),
+                    })
+                    .collect(),
+            )
+            .await?;
         let feeds: Vec<FeedUpdate> = feeds.iter().map(|f| FeedUpdate::from(f.clone())).collect();
         let mut tasks = vec![];
         feeds
             .iter()
-            .for_each(|f| tasks.push(self.process_updates(db_pool, f)));
+            .for_each(|f| tasks.push(self.process_updates(f)));
         futures::future::join_all(tasks).await;
         Ok(new_sources)
     }
 }
 
-async fn sources_gen(
-    db_pool: &Pool,
+async fn sources_gen<S: Storage>(
+    storage: S,
     source_check_period: i32,
     sleep_period: u64,
     mut sender: mpsc::Sender<Vec<(Option<FeedKind>, String)>>,
 ) {
     let sleep_period = Duration::from_secs(sleep_period);
     loop {
-        match get_sources(db_pool, &source_check_period).await {
+        match get_sources(&storage, &source_check_period).await {
             Ok(sources) => {
                 debug!("found sources for scrape: {:?}", sources);
                 if let Err(err) = sender.send(sources).await {
@@ -322,15 +317,14 @@ async fn sources_gen(
     }
 }
 
-async fn get_sources(
-    db_pool: &Pool,
+async fn get_sources<S: Storage>(
+    storage: &S,
     source_check_period_secs: &i32,
 ) -> Result<Vec<(Option<FeedKind>, String)>> {
-    Ok(
-        models::Source::get_by_kind_for_scrape(db_pool, WEB.to_string(), source_check_period_secs)
-            .await?
-            .iter()
-            .map(|r| (None, r.origin.clone()))
-            .collect(),
-    )
+    Ok(storage
+        .get_sources_by_kind_for_scrape(WEB.to_string(), source_check_period_secs)
+        .await?
+        .iter()
+        .map(|r| (None, r.origin.clone()))
+        .collect())
 }
