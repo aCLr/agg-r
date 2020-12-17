@@ -1,18 +1,22 @@
-use super::structs::*;
 use crate::models;
 use crate::result::{Error, Result};
 use crate::storage::Storage;
 use std::path::Path;
 use std::sync::Arc;
+use tg_collector::parsers::{DefaultTelegramParser, TelegramDataParser};
 use tg_collector::tg_client::TgClient;
+use tg_collector::types::FileType;
+use tg_collector::types::{TelegramFile, TelegramFileWithMeta};
 use tokio::sync::RwLock;
 
 pub(super) const TELEGRAM: &str = "TELEGRAM";
 
-pub struct TelegramSourceBuilder<S>
+pub struct TelegramSourceBuilder<S, P>
 where
     S: Storage + Send + Sync,
+    P: TelegramDataParser + Send + Sync + Clone,
 {
+    parser: P,
     api_id: i64,
     api_hash: String,
     phone_number: String,
@@ -24,9 +28,10 @@ where
     storage: Option<S>,
 }
 
-impl<S> TelegramSourceBuilder<S>
+impl<S, P> TelegramSourceBuilder<S, P>
 where
     S: Storage + Send + Sync,
+    P: TelegramDataParser + Send + Sync + Clone,
 {
     pub fn new(
         api_id: i64,
@@ -35,11 +40,13 @@ where
         max_download_queue_size: usize,
         files_directory: &str,
         log_download_state_secs_interval: u64,
+        parser: P,
     ) -> Self {
         Self {
             api_id,
             max_download_queue_size,
             log_download_state_secs_interval,
+            parser,
             files_directory: files_directory.to_string(),
             phone_number: phone_number.to_string(),
             api_hash: api_hash.to_string(),
@@ -54,6 +61,11 @@ where
         self
     }
 
+    pub fn with_parser(mut self, parser: P) -> Self {
+        self.parser = parser;
+        self
+    }
+
     pub fn with_log_verbosity_level(mut self, level: i32) -> Self {
         self.log_verbosity_level = level;
         self
@@ -64,7 +76,7 @@ where
         self
     }
 
-    pub fn build(self) -> TelegramSource<S> {
+    pub fn build(self) -> TelegramSource<S, P> {
         if self.storage.is_none() {
             panic!("storage not set")
         }
@@ -83,21 +95,25 @@ where
             ))),
             files_directory: self.files_directory.clone(),
             storage: self.storage.unwrap(),
+            parser: self.parser,
         }
     }
 }
-pub struct TelegramSource<S>
+pub struct TelegramSource<S, P>
 where
     S: Storage + Send + Sync,
+    P: TelegramDataParser + Send + Sync + Clone,
 {
     pub(super) collector: Arc<RwLock<TgClient>>,
     pub(super) files_directory: String,
     pub(super) storage: S,
+    pub(super) parser: P,
 }
 
-impl<S> TelegramSource<S>
+impl<S, P> TelegramSource<S, P>
 where
     S: Storage + Send + Sync,
+    P: TelegramDataParser + Send + Sync + Clone,
 {
     pub fn builder(
         api_id: i64,
@@ -106,7 +122,8 @@ where
         max_download_queue_size: usize,
         files_directory: &str,
         log_download_state_secs_interval: u64,
-    ) -> TelegramSourceBuilder<S> {
+        parser: P,
+    ) -> TelegramSourceBuilder<S, P> {
         TelegramSourceBuilder::new(
             api_id,
             api_hash,
@@ -114,6 +131,7 @@ where
             max_download_queue_size,
             files_directory,
             log_download_state_secs_interval,
+            parser,
         )
     }
 

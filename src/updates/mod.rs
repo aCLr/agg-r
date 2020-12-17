@@ -4,6 +4,7 @@ use crate::storage::Storage;
 use async_trait::async_trait;
 use futures::future::join_all;
 use std::sync::Arc;
+use tg_collector::parsers::TelegramDataParser;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, Mutex};
 
@@ -36,22 +37,24 @@ pub trait SourceProvider {
     async fn synchronize(&self, secs_depth: i32) -> Result<()>;
 }
 
-pub struct SourcesAggregator<S>
+pub struct SourcesAggregator<S, P>
 where
     S: Storage + Send + Sync + Clone + 'static,
+    P: TelegramDataParser + Send + Sync + Clone + 'static,
 {
     http_source: Option<Arc<http::HttpSource<S>>>,
-    tg_source: Option<Arc<tg::TelegramSource<S>>>,
+    tg_source: Option<Arc<tg::TelegramSource<S, P>>>,
     updates_sender: Arc<Mutex<Sender<Result<SourceData>>>>,
     updates_receiver: Mutex<Receiver<Result<SourceData>>>,
     storage: S,
 }
 
-impl<S> SourcesAggregator<S>
+impl<S, P> SourcesAggregator<S, P>
 where
     S: Storage + Send + Sync + Clone + 'static,
+    P: TelegramDataParser + Send + Sync + Clone + 'static,
 {
-    pub fn builder() -> UpdatesHandlerBuilder<S> {
+    pub fn builder() -> UpdatesHandlerBuilder<S, P> {
         UpdatesHandlerBuilder::default()
     }
 
@@ -180,18 +183,20 @@ where
     }
 }
 
-pub struct UpdatesHandlerBuilder<S>
+pub struct UpdatesHandlerBuilder<S, P>
 where
     S: Storage + Send + Sync + Clone + 'static,
+    P: TelegramDataParser + Send + Sync + Clone + 'static,
 {
     http_source: Option<Arc<http::HttpSource<S>>>,
-    tg_source: Option<Arc<tg::TelegramSource<S>>>,
+    tg_source: Option<Arc<tg::TelegramSource<S, P>>>,
     storage: Option<S>,
 }
 
-impl<S> Default for UpdatesHandlerBuilder<S>
+impl<S, P> Default for UpdatesHandlerBuilder<S, P>
 where
     S: Storage + Send + Sync + Clone + 'static,
+    P: TelegramDataParser + Send + Sync + Clone + 'static,
 {
     fn default() -> Self {
         Self {
@@ -202,9 +207,10 @@ where
     }
 }
 
-impl<S> UpdatesHandlerBuilder<S>
+impl<S, P> UpdatesHandlerBuilder<S, P>
 where
     S: Storage + Send + Sync + Clone + 'static,
+    P: TelegramDataParser + Send + Sync + Clone + 'static,
 {
     pub fn with_storage(mut self, storage: S) -> Self {
         self.storage = Some(storage);
@@ -215,12 +221,12 @@ where
         self
     }
 
-    pub fn with_tg_source(mut self, tg_source: Arc<tg::TelegramSource<S>>) -> Self {
+    pub fn with_tg_source(mut self, tg_source: Arc<tg::TelegramSource<S, P>>) -> Self {
         self.tg_source = Some(tg_source);
         self
     }
 
-    pub fn build(self) -> SourcesAggregator<S> {
+    pub fn build(self) -> SourcesAggregator<S, P> {
         if self.storage.is_none() {
             panic!("storage not passed");
         }

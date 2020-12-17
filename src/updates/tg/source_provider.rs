@@ -1,30 +1,32 @@
 use super::handler::Handler;
-use super::parsers;
-use super::TelegramSource;
 use crate::models;
 use crate::result::{Error, Result};
 use crate::storage::Storage;
+use crate::updates::tg::TelegramSource;
 use crate::updates::{Source, SourceData, SourceProvider};
 use async_trait::async_trait;
 use chrono::NaiveDateTime;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tg_collector::parsers::TelegramDataParser;
 use tg_collector::tg_client::TgClient;
 use tokio::stream::StreamExt;
 use tokio::sync::{mpsc, Mutex};
 
 #[async_trait]
-impl<S> SourceProvider for TelegramSource<S>
+impl<S, P> SourceProvider for TelegramSource<S, P>
 where
     S: Storage + Send + Sync,
+    P: TelegramDataParser + Send + Sync + Clone + 'static,
 {
     fn get_source(&self) -> Source {
         Source::Telegram
     }
 
     async fn run(&self, updates_sender: Arc<Mutex<mpsc::Sender<Result<SourceData>>>>) {
-        let mut tg_handler = Handler::new(updates_sender, self.collector.clone());
+        let mut tg_handler =
+            Handler::new(updates_sender, self.collector.clone(), self.parser.clone());
         tg_handler.run().await;
     }
 
@@ -37,7 +39,7 @@ where
             .await?;
         let mut sources = vec![];
         for ch in channels {
-            let source = parsers::channel_to_new_source(ch);
+            let source: models::NewSource = ch.into();
             match self.storage.save_sources(vec![source]).await {
                 Ok(s) => sources.extend(s),
                 Err(e) => error!("{:?}", e),
@@ -54,7 +56,7 @@ where
         for channel in channels {
             debug!("going to sync {}", channel.title);
             let chat_id = channel.chat_id;
-            let source = parsers::channel_to_new_source(channel);
+            let source: models::NewSource = channel.into();
             let source = self
                 .storage
                 .save_sources(vec![source])
@@ -85,7 +87,7 @@ where
                         let mut on_file = |f| {
                             files_by_rec.insert((message.id(), source.id), f);
                         };
-                        match parsers::parse_message_content(message.content()).await {
+                        match self.parser.parse_message_content(message.content()).await {
                             Ok((Some(c), Some(f))) => {
                                 on_content(c);
                                 on_file(f)
@@ -93,8 +95,8 @@ where
                             Ok((Some(c), None)) => on_content(c),
                             Ok((None, Some(f))) => on_file(f),
                             Ok((None, None)) => {}
-                            Err(Error::UpdateNotSupported(_)) => continue,
-                            Err(e) => return Err(e),
+                            Err(tg_collector::result::Error::UpdateNotSupported(_)) => continue,
+                            Err(e) => return Err(Error::TgCollectorError(e)),
                         }
                     }
                     Err(e) => return Err(Error::TgCollectorError(e)),

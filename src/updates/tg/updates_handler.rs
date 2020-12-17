@@ -1,16 +1,17 @@
-use super::parsers::channel_to_new_source;
-use super::TelegramSource;
-use super::TelegramUpdate;
 use crate::models;
 use crate::result::{Error, Result};
 use crate::storage::Storage;
+use crate::updates::tg::TelegramSource;
 use crate::updates::UpdatesHandler;
 use async_trait::async_trait;
+use tg_collector::parsers::TelegramDataParser;
+use tg_collector::types::TelegramUpdate;
 
 #[async_trait]
-impl<S> UpdatesHandler<TelegramUpdate> for TelegramSource<S>
+impl<S, P> UpdatesHandler<TelegramUpdate> for TelegramSource<S, P>
 where
     S: Storage + Send + Sync,
+    P: TelegramDataParser + Send + Sync + Clone,
 {
     async fn create_source(&self, updates: &TelegramUpdate) -> Result<models::Source> {
         match updates {
@@ -32,8 +33,12 @@ where
                 if chann.is_none() {
                     return Err(Error::SourceNotFound);
                 }
-                let s = channel_to_new_source(chann.unwrap());
-                Ok(self.storage.save_sources(vec![s]).await?.pop().unwrap())
+                Ok(self
+                    .storage
+                    .save_sources(vec![chann.unwrap().into()])
+                    .await?
+                    .pop()
+                    .unwrap())
             }
         }
     }

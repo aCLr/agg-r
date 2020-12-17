@@ -1783,6 +1783,7 @@ dependencies = [
  "futures-util",
  "log",
  "rtdlib",
+ "serde",
  "telegram-client",
  "tokio",
 ]
