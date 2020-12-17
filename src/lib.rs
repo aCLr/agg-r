@@ -19,5 +19,4 @@ pub mod config;
 pub mod models;
 pub mod result;
 pub mod storage;
-mod tools;
 mod updates;

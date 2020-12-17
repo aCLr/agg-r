@@ -1,9 +1,10 @@
+/// Telegram source struct and builder
 use crate::models;
 use crate::result::{Error, Result};
 use crate::storage::Storage;
 use std::path::Path;
 use std::sync::Arc;
-use tg_collector::parsers::{DefaultTelegramParser, TelegramDataParser};
+use tg_collector::parsers::TelegramDataParser;
 use tg_collector::tg_client::TgClient;
 use tg_collector::types::FileType;
 use tg_collector::types::{TelegramFile, TelegramFileWithMeta};
@@ -150,6 +151,7 @@ where
     ) -> Result<()> {
         let db_files = files
             .iter()
+            .filter(|f| self.file_may_be_download(f))
             .map(|file| {
                 let meta: Option<String>;
                 let type_: String;
@@ -168,6 +170,7 @@ where
                         type_ = "IMAGE".to_string();
                         meta = serde_json::to_string(image_meta).ok();
                     }
+                    _ => panic!("invalid file type passed"),
                 };
                 models::NewFile {
                     kind: TELEGRAM.to_string(),
@@ -195,6 +198,16 @@ where
             }
         }
         Ok(())
+    }
+
+    fn file_may_be_download(&self, file: &TelegramFileWithMeta) -> bool {
+        match file.file_type {
+            FileType::Document => true,
+            FileType::Audio(_) => false,
+            FileType::Video(_) => false,
+            FileType::Animation(_) => true,
+            FileType::Image(_) => true,
+        }
     }
 
     pub(super) async fn handle_file_downloaded(&self, file: &TelegramFile) -> Result<()> {

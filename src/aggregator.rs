@@ -5,7 +5,7 @@ use crate::storage::Storage;
 use crate::updates::Source;
 use crate::{config, updates};
 use std::sync::Arc;
-use tg_collector::parsers::{DefaultTelegramParser, TelegramDataParser};
+use tg_collector::parsers::TelegramDataParser;
 
 pub struct Aggregator<S, P>
 where

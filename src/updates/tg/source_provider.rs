@@ -50,26 +50,34 @@ where
 
     async fn synchronize(&self, secs_depth: i32) -> Result<()> {
         let channels = self.collector.read().await.get_all_channels(1000).await?;
+
         let until = SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
             - Duration::new(secs_depth as u64, 0);
+
         debug!("got {} channels to sync", channels.len());
+
         for channel in channels {
             debug!("going to sync {}", channel.title);
+
             let chat_id = channel.chat_id;
             let source: models::NewSource = channel.into();
+
             let source = self
                 .storage
                 .save_sources(vec![source])
                 .await?
                 .pop()
                 .unwrap();
+
             let mut messages_stream = Box::pin(TgClient::get_chat_history_stream(
                 self.collector.clone(),
                 chat_id,
                 until.as_secs() as i64,
             ));
+
             let mut parsed_records = vec![];
             let mut files_by_rec = HashMap::new();
+
             while let Some(message) = messages_stream.next().await {
                 match message {
                     Ok(message) => {
@@ -87,6 +95,7 @@ where
                         let mut on_file = |f| {
                             files_by_rec.insert((message.id(), source.id), f);
                         };
+
                         match self.parser.parse_message_content(message.content()).await {
                             Ok((Some(c), Some(f))) => {
                                 on_content(c);
@@ -102,7 +111,9 @@ where
                     Err(e) => return Err(Error::TgCollectorError(e)),
                 }
             }
+
             debug!("get {} records for {}", parsed_records.len(), source.name);
+
             let records = self.storage.save_records(parsed_records).await?;
             for rec in &records {
                 let rec_files =
