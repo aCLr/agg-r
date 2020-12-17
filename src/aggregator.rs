@@ -55,6 +55,7 @@ where
         if self.config.http().enabled() {
             let http_source = updates::http::HttpSource::builder()
                 .with_sleep_secs(self.config.http().sleep_secs())
+                .with_storage(self.storage.clone())
                 .build();
             let http_source = Arc::new(http_source);
             updates_builder = updates_builder.with_http_source(http_source);
@@ -71,6 +72,7 @@ where
             )
             .with_database_directory(self.config.telegram().database_directory())
             .with_log_verbosity_level(self.config.telegram().log_verbosity_level())
+            .with_storage(self.storage.clone())
             .build();
             let tg_source = Arc::new(tg_source);
             updates_builder = updates_builder.with_tg_source(tg_source);

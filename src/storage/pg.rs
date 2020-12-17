@@ -20,11 +20,16 @@ pub type Pool = _Pool<ConnectionManager<PgConnection>>;
 
 embed_migrations!();
 
+#[derive(Clone)]
 pub struct PgStorage {
     pool: Pool,
 }
 
 impl PgStorage {
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+
     pub fn migrate(&self) -> Result<(), diesel_migrations::RunMigrationsError> {
         let connection = self.pool.get().expect("can't get connection from pool");
         embedded_migrations::run(&connection)?;

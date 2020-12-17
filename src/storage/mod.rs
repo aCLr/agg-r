@@ -3,7 +3,7 @@ use crate::result::Result;
 use async_trait::async_trait;
 
 #[cfg(feature = "pg-storage")]
-pub mod default;
+pub mod pg;
 
 #[cfg(feature = "pg-storage")]
 pub mod schema;
